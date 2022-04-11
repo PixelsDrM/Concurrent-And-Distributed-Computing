@@ -57,7 +57,7 @@ void *remote_handler(void *server_socket)
 void *server_handler()
 {
     int server_socket, addr_size, new_socket, *new_sock;
-    struct sockaddr_un server, client;
+    struct sockaddr_un server, remote;
     char *message;
 
     check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
@@ -72,22 +72,22 @@ void *server_handler()
 
     check(bind(server_socket, (struct sockaddr *)&server, addr_size), "Erreur lors du bind du socket");
 
-    check(listen(server_socket, 3), "Erreur lors de l'ecoute du socket");
+    check(listen(server_socket, 3), "Erreur lors de l'écoute du socket");
 
     printf("En attente de connexions entrantes...\n\n");
 
-    while ((new_socket = accept(server_socket, (struct sockaddr *)&client, (socklen_t *)&addr_size)))
+    while ((new_socket = accept(server_socket, (struct sockaddr *)&remote, (socklen_t *)&addr_size)))
     {
-        printf("Connexion entrante\n");
+        printf("Connexion entrante...\n");
 
         message = "Remote: Connexion établie";
         write(new_socket, message, strlen(message));
 
-        pthread_t client_thread;
+        pthread_t remote_thread;
         new_sock = malloc(sizeof(int));
         *new_sock = new_socket;
 
-        check(pthread_create(&client_thread, NULL, *remote_handler, (void *)new_sock), "Impossible de créer le thread");
+        check(pthread_create(&remote_thread, NULL, *remote_handler, (void *)new_sock), "Impossible de créer le thread");
     }
 
     check(new_socket, "Le serveur n'a pas réussit à accepter la connexion");
@@ -129,7 +129,7 @@ void *client_handler(){
 
     char message[MESSAGE_SIZE];
 
-    snprintf(buffer, 32, "Bonjour de client %d", ID);
+    snprintf(buffer, 32, "Bonjour de remote %d", ID);
     strcpy(message, buffer);
 
     if (send(socket_desc, message, strlen(message), 0) < 0)
@@ -152,7 +152,7 @@ void *client_handler(){
 
 int main(int argc, char *argv[])
 {
-    // Usage: ./app <id>
+    // Usage: ./app <id> <remote_id>
     if (argc < 3)
     {
         printf("Usage: ./app <id> <remoteid>\n");
@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
     ID = atoi(argv[1]);
     remoteID = atoi(argv[2]);
 
-    // Remove socket if it exists
+    // Remove server socket if it exists
     char buffer[32];
     snprintf(buffer, 32, "/tmp/Socket%d", ID);
     unlink(buffer);
@@ -184,10 +184,10 @@ int main(int argc, char *argv[])
         }
         else
         {
-            printf("Envoie d'un message vers un client aléatoire\n");
-            //Start send thread
-            pthread_t send_thread;
-            check(pthread_create(&send_thread, NULL, *client_handler, NULL), "Impossible de créer le thread d'envoie");
+            //Start client thread
+            printf("Envoie d'un message vers un processus remote...\n");
+            pthread_t client_thread;
+            check(pthread_create(&client_thread, NULL, *client_handler, NULL), "Impossible de créer le thread client");
         }
     }
     
