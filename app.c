@@ -6,8 +6,50 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #define MESSAGE_SIZE 2000
+
+#define N 32
+
+sem_t* plein;
+sem_t* vide;
+sem_t* mutex;
+
+char to_send[32];
+char to_receive[32];
+
+sem_t* creerSemaphore (unsigned int _compteur)
+{
+    sem_t* semaphore = (sem_t*) malloc (sizeof(sem_t)); 
+    
+    if (sem_init (semaphore, 0, _compteur) == 0) 
+    {
+        
+    }
+    else {
+        perror("Echec dans la création du sémaphore ! \n");
+    }
+    return semaphore;
+}
+
+int detruireSemaphore (sem_t* _semaphore)
+{
+    unsigned int resultat = sem_destroy(_semaphore);
+    free (_semaphore); 
+    
+    return resultat;
+}
+
+int P (sem_t* _semaphore)
+{
+    return sem_wait (_semaphore);
+}
+
+int V (sem_t* _semaphore)
+{
+    return sem_post (_semaphore);
+}
 
 int ID = 0; // Local ID 
 int remoteID = 0; // Remote ID
@@ -99,6 +141,15 @@ void *server_handler()
 }
 
 void *client_handler(){
+    while(1){
+        P (plein);         /* Attente d'un objet */ 
+        P (mutex);         /* On bloque la file */ 
+        char message[32];
+        strcpy(message, to_send);
+        V (mutex);         /* Liberation de la file */ 
+        V (vide);          /* Une place est a prendre */ 
+        printf("%s", message);
+    }
     int socket_desc, addr_size;
     struct sockaddr_un server;
     char server_reply[MESSAGE_SIZE];
@@ -153,21 +204,8 @@ void *client_handler(){
     return 0;
 }
 
-int main(int argc, char *argv[])
+void *compute_handler()
 {
-    // Usage: ./app <id> <remote_id>
-    if (argc < 3)
-    {
-        printf("Usage: ./app <id> <remoteid>\n");
-        return 1;
-    }
-    ID = atoi(argv[1]);
-    remoteID = atoi(argv[2]);
-
-    // Start server thread
-    pthread_t server_thread;
-    check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
-
     // Set seed for random number generator
     srand(time(NULL));
 
@@ -191,12 +229,48 @@ int main(int argc, char *argv[])
             clockCounter ++;
             //Start client thread
             printf("Envoie d'un message vers un processus remote...\n");
-            pthread_t client_thread;
-            check(pthread_create(&client_thread, NULL, *client_handler, NULL), "Impossible de créer le thread client");
+            P (vide);          /* On veut une place vide */ 
+            P (mutex);         /* On bloque la file */ 
+            strcpy(to_send, "Bonjour de remote");
+            V (mutex);         /* Liberation de la file */ 
+            V (plein);         /* Un objet est a prendre */             
         }
-
-        printf("Clock : %i\n\n", clockCounter);
     }
+}
+
+int main(int argc, char *argv[])
+{
+    // Usage: ./app <id> <remote_id>
+    if (argc < 3)
+    {
+        printf("Usage: ./app <id> <remoteid>\n");
+        return 1;
+    }
+    ID = atoi(argv[1]);
+    remoteID = atoi(argv[2]);
+
+    plein = creerSemaphore (0);
+    vide  = creerSemaphore (N);
+    mutex = creerSemaphore (1);
+        
+    // Start server thread
+    pthread_t server_thread;
+    check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
+
+    // Start client thread
+    pthread_t client_thread;
+    check(pthread_create(&client_thread, NULL, *client_handler, NULL), "Impossible de créer le thread client");
+
+    //Start compute thread
+    pthread_t compute_thread;
+    check(pthread_create(&compute_thread, NULL, *compute_handler, NULL), "Impossible de créer le thread compute");
+
+    // Wait for threads to finish
+    pthread_join(compute_thread, NULL);
+    
+    detruireSemaphore (plein);
+    detruireSemaphore (vide);
+    detruireSemaphore (mutex);
     
     return 0;
 }
