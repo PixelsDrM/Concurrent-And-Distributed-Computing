@@ -11,6 +11,7 @@
 
 int ID = 0; // Local ID 
 int remoteID = 0; // Remote ID
+int clockCounter = 0;
 
 // Display error message and exit
 int check(int status, const char *message)
@@ -181,6 +182,8 @@ int main(int argc, char *argv[])
         if (random == 0)
         {
             printf("Action locale\n\n");
+            clockCounter ++;
+            printf("Clock : %i\n\n", clockCounter);
         }
         else
         {
