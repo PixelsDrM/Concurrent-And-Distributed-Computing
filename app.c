@@ -176,22 +176,29 @@ int main(int argc, char *argv[])
 
     // Start computing loop
     while(1){
-        sleep(2);
+        // Sleep for a random amount of time in seconds
+        sleep(rand() % 10);
 
+        //Action 1 (vérification des messages reçus)
+        //todo
+
+        //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser)
         int random = rand() % 2;
         if (random == 0)
         {
-            printf("Action locale\n\n");
             clockCounter ++;
-            printf("Clock : %i\n\n", clockCounter);
+            printf("Action locale\n\n");
         }
         else
         {
+            clockCounter ++;
             //Start client thread
             printf("Envoie d'un message vers un processus remote...\n");
             pthread_t client_thread;
             check(pthread_create(&client_thread, NULL, *client_handler, NULL), "Impossible de créer le thread client");
         }
+
+        printf("Clock : %i\n\n", clockCounter);
     }
     
     return 0;
