@@ -9,8 +9,10 @@
 
 #define MESSAGE_SIZE 2000
 
-int ID = 0;
+int ID = 0; // Local ID 
+int remoteID = 0; // Remote ID
 
+// Display error message and exit
 int check(int status, const char *message)
 {
     if (status == -1)
@@ -21,25 +23,25 @@ int check(int status, const char *message)
     return status;
 }
 
-void *client_handler(void *server_socket)
+void *remote_handler(void *server_socket)
 {
     int sock = *(int *)server_socket;
     unsigned int message_size;
-    char client_message[MESSAGE_SIZE];
+    char remote_message[MESSAGE_SIZE];
 
-    while ((message_size = recv(sock, client_message, MESSAGE_SIZE, 0)) > 0)
+    while ((message_size = recv(sock, remote_message, MESSAGE_SIZE, 0)) > 0)
     {
-        printf("Client envoi: %s", client_message);
+        printf("Message reçus: %s\n", remote_message);
 
-        const char OK_MESSAGE[] = "Serveur: message reçu\n";
+        const char OK_MESSAGE[] = "Remote: Message bien reçu";
         write(sock, OK_MESSAGE, strlen(OK_MESSAGE));
 
-        memset(client_message, 0, sizeof client_message);
+        memset(remote_message, 0, sizeof remote_message);
     }
 
     if (message_size == 0)
     {
-        puts("Client déconnecté");
+        printf("Remote déconnecté\n\n");
         fflush(stdout);
     }
     else if (message_size == -1)
@@ -61,37 +63,31 @@ void *server_handler()
     check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
 
     server.sun_family = AF_UNIX;
-    if(ID == 1){
-        strcpy(server.sun_path, "/tmp/Socket");
-    }
-    else if (ID == 2){
-        strcpy(server.sun_path, "/tmp/SocketSocket");
-    }
-    addr_size = strlen(server.sun_path) + sizeof(server.sun_family);
 
-    printf("%s\n", server.sun_path);
+    char buffer[32];
+    snprintf(buffer, 32, "/tmp/Socket%d", ID);
+    strcpy(server.sun_path, buffer);
+    
+    addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
 
     check(bind(server_socket, (struct sockaddr *)&server, addr_size), "Erreur lors du bind du socket");
-    printf("Bind effectue\n");
 
     check(listen(server_socket, 3), "Erreur lors de l'ecoute du socket");
 
-    printf("En attente de connexions entrantes...\n");
+    printf("En attente de connexions entrantes...\n\n");
 
     while ((new_socket = accept(server_socket, (struct sockaddr *)&client, (socklen_t *)&addr_size)))
     {
-        printf("Connexion établie\n");
+        printf("Connexion entrante\n");
 
-        message = "Serveur: Connexion établie\n";
+        message = "Remote: Connexion établie";
         write(new_socket, message, strlen(message));
 
         pthread_t client_thread;
         new_sock = malloc(sizeof(int));
         *new_sock = new_socket;
 
-        check(pthread_create(&client_thread, NULL, *client_handler, (void *)new_sock), "Impossible de créer le thread");
-
-        printf("Thread assigne\n");
+        check(pthread_create(&client_thread, NULL, *remote_handler, (void *)new_sock), "Impossible de créer le thread");
     }
 
     check(new_socket, "Le serveur n'a pas réussit à accepter la connexion");
@@ -99,7 +95,7 @@ void *server_handler()
     return 0;
 }
 
-void *send_handler(){
+void *client_handler(){
     int socket_desc, addr_size;
     struct sockaddr_un server;
     char server_reply[MESSAGE_SIZE];
@@ -112,13 +108,12 @@ void *send_handler(){
     }
 
     server.sun_family = AF_UNIX;
-    if(ID == 1){
-        strcpy(server.sun_path, "/tmp/SocketSocket");
-    }
-    else if (ID == 2){
-        strcpy(server.sun_path, "/tmp/Socket");
-    }
-    addr_size = strlen(server.sun_path) + sizeof(server.sun_family);
+
+    char buffer[32];
+    snprintf(buffer, 32, "/tmp/Socket%d", remoteID);
+    strcpy(server.sun_path, buffer);
+
+    addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
 
     if (connect(socket_desc, (struct sockaddr *)&server, addr_size) < 0)
     {
@@ -127,19 +122,15 @@ void *send_handler(){
 
     if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
     {
-        puts("Erreur de réception du message depuis le serveur");
+        printf("Erreur de réception du message depuis le serveur");
     }
-    puts(server_reply);
+    printf("%s\n",server_reply);
     bzero(server_reply, sizeof(server_reply));
 
     char message[MESSAGE_SIZE];
 
-    if(ID == 1){
-        strcpy(message, "Client 1: Bonjour\n");
-    }
-    else if (ID == 2){
-        strcpy(message, "Client 2: Bonjour\n");
-    }
+    snprintf(buffer, 32, "Bonjour de client %d", ID);
+    strcpy(message, buffer);
 
     if (send(socket_desc, message, strlen(message), 0) < 0)
     {
@@ -149,9 +140,9 @@ void *send_handler(){
 
     if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
     {
-        puts("Erreur de réception du message depuis le serveur");
+        printf("Erreur de réception du message depuis le serveur");
     }
-    puts(server_reply);
+    printf("%s\n\n", server_reply);
     bzero(server_reply, sizeof(server_reply));
 
     close(socket_desc);
@@ -161,29 +152,42 @@ void *send_handler(){
 
 int main(int argc, char *argv[])
 {
-    if(argc != 2){
-        printf("Usage: %s <ID>\n", argv[0]);
+    // Usage: ./app <id>
+    if (argc < 3)
+    {
+        printf("Usage: ./app <id> <remoteid>\n");
         return 1;
     }
     ID = atoi(argv[1]);
+    remoteID = atoi(argv[2]);
 
+    // Remove socket if it exists
+    char buffer[32];
+    snprintf(buffer, 32, "/tmp/Socket%d", ID);
+    unlink(buffer);
+
+    // Start server thread
     pthread_t server_thread;
     check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
 
+    // Set seed for random number generator
     srand(time(NULL));
+
+    // Start computing loop
     while(1){
         sleep(2);
 
         int random = rand() % 2;
         if (random == 0)
         {
-            printf("Action locale\n");
+            printf("Action locale\n\n");
         }
         else
         {
             printf("Envoie d'un message vers un client aléatoire\n");
+            //Start send thread
             pthread_t send_thread;
-            check(pthread_create(&send_thread, NULL, *send_handler, NULL), "Impossible de créer le thread d'envoie");
+            check(pthread_create(&send_thread, NULL, *client_handler, NULL), "Impossible de créer le thread d'envoie");
         }
     }
     

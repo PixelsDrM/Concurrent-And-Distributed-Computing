@@ -1,7 +1,13 @@
 # TP-Informatique-Concurente-Et-Repartie
-TP-Informatique-Concurente-Et-Repartie
+
+COMPILE
 
 ```bash
-gcc serveur_unix_leger.c -o serveur_unix_leger.out
-gcc client_unix.c -o client_unix.out
+gcc app.c -o app.out -lpthread
+```
+
+USAGE
+
+```bash
+./app <id> <remoteid>
 ```
