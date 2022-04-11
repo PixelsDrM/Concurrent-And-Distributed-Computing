@@ -64,9 +64,11 @@ void *server_handler()
     check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
 
     server.sun_family = AF_UNIX;
-
+    
     char buffer[32];
     snprintf(buffer, 32, "/tmp/Socket%d", ID);
+    // Remove server socket if it exists
+    unlink(buffer);
     strcpy(server.sun_path, buffer);
     
     addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
@@ -161,11 +163,6 @@ int main(int argc, char *argv[])
     }
     ID = atoi(argv[1]);
     remoteID = atoi(argv[2]);
-
-    // Remove server socket if it exists
-    char buffer[32];
-    snprintf(buffer, 32, "/tmp/Socket%d", ID);
-    unlink(buffer);
 
     // Start server thread
     pthread_t server_thread;
