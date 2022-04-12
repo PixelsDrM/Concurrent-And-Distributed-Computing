@@ -12,12 +12,12 @@
 
 #define N 32
 
-sem_t* plein;
-sem_t* vide;
+sem_t* full;
+sem_t* empty;
 sem_t* mutex;
 
-char to_send[32];
-char to_receive[32];
+char to_send[N];
+char to_receive[N];
 
 sem_t* creerSemaphore (unsigned int _compteur)
 {
@@ -132,8 +132,8 @@ void *server_handler()
 
 void *client_handler(){
     while(1){
-        sem_wait(plein);         /* Attente d'un objet */ 
-        sem_wait(mutex);         /* On bloque la file */ 
+        sem_wait(full); 
+        sem_wait(mutex);
 
         int socket_desc, addr_size;
         struct sockaddr_un server;
@@ -168,8 +168,7 @@ void *client_handler(){
 
         char message[MESSAGE_SIZE];
 
-        snprintf(buffer, 32, "Bonjour de remote %d", ID);
-        strcpy(message, buffer);
+        strcpy(message, to_send);
 
         if (send(socket_desc, message, strlen(message), 0) < 0)
         {
@@ -186,8 +185,8 @@ void *client_handler(){
 
         close(socket_desc);
 
-        sem_post(mutex);         /* Liberation de la file */ 
-        sem_post(vide);          /* Une place est a prendre */ 
+        sem_post(mutex);
+        sem_post(empty);
     }
 
     return 0;
@@ -218,11 +217,11 @@ void *compute_handler()
             clockCounter ++;
             //Start client thread
             printf("Envoie d'un message vers un processus remote...\n");
-            sem_wait(vide);          /* On veut une place vide */ 
-            sem_wait(mutex);         /* On bloque la file */ 
-            strcpy(to_send, "Bonjour de remote");
-            sem_post(mutex);         /* Liberation de la file */ 
-            sem_post(plein);         /* Un objet est a prendre */             
+            sem_wait(empty);
+            sem_wait(mutex);
+            snprintf(to_send, 32, "Bonjour de remote %d, %d", ID, rand() % 100);
+            sem_post(mutex);
+            sem_post(full);
         }
     }
 }
@@ -238,8 +237,8 @@ int main(int argc, char *argv[])
     ID = atoi(argv[1]);
     remoteID = atoi(argv[2]);
 
-    plein = creerSemaphore (0);
-    vide  = creerSemaphore (N);
+    full = creerSemaphore (0);
+    empty  = creerSemaphore (N);
     mutex = creerSemaphore (1);
         
     // Start server thread
@@ -257,8 +256,8 @@ int main(int argc, char *argv[])
     // Wait for threads to finish
     pthread_join(compute_thread, NULL);
     
-    detruireSemaphore (plein);
-    detruireSemaphore (vide);
+    detruireSemaphore (full);
+    detruireSemaphore (empty);
     detruireSemaphore (mutex);
     
     return 0;
