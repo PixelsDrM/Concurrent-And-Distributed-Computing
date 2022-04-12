@@ -211,7 +211,7 @@ void *compute_handler()
             if(strcmp(toReceive[i], "") != 0)
             {
                 clockCounter++;
-                printf("Message reçus n°%d : %s\n\n", i+1, toReceive[i]);
+                printf("Message reçu n°%d : %s\n\n", i+1, toReceive[i]);
                 memset(toReceive[i], 0, sizeof toReceive[i]);
             }
         }
