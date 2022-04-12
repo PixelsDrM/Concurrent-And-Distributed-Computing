@@ -182,6 +182,7 @@ void *compute_handler()
 
         //Action 1 (vérification des messages reçus)
         if(strcmp(toReceive, "") != 0){
+            clockCounter++;
             printf("Message reçu: %s\n\n", toReceive);
             bzero(toReceive, sizeof(toReceive));
         }
@@ -197,13 +198,15 @@ void *compute_handler()
         {
             clockCounter ++;
             //Produce new message
-            //printf("Envoie d'un message vers un processus remote...\n");
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
             snprintf(toSend, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
+            printf("Envoie de '%s' vers le processus %d...\n\n", toSend, remoteID);
             sem_post(clientMutex);
             sem_post(clientFull);
         }
+
+        //printf("Clock: %d\n\n", clockCounter);
     }
 }
 
