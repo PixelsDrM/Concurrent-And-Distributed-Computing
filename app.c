@@ -212,7 +212,6 @@ void *all_clients_handler()
             printf("Erreur lors de la création du socket");
         }
 
-    
         server.sun_family = AF_UNIX;
 
         char buffer[BUFFER_SIZE];
@@ -228,7 +227,7 @@ void *all_clients_handler()
 
         char message[MESSAGE_SIZE];
 
-        strcpy(message, "Broadcast");
+        strcpy(message, "REQUEST");
 
         if (send(socket_desc, message, strlen(message), 0) < 0)
         {
@@ -284,11 +283,12 @@ void *compute_handler()
         }
         else if (random == 2 && waitingForSC == false)
         {
-            waitingForSC = true;
             clockCounter++;
+            waitingForSC = true;
 
             pthread_t broadcast_thread;
             check(pthread_create(&broadcast_thread, NULL, *all_clients_handler, NULL), "Impossible de créer le thread");
+            pthread_join(broadcast_thread, NULL);
 
             waitingForSC = false;
         }
