@@ -10,13 +10,16 @@
 
 #define MESSAGE_SIZE 2000
 #define BUFFER_SIZE 32
+#define MAX_STRINGS_TO_RECEIVE 10
 
 sem_t* clientFull;
 sem_t* clientEmpty;
 sem_t* clientMutex;
 
+sem_t* serverMutex;
+
 char toSend[BUFFER_SIZE];
-char toReceive[BUFFER_SIZE];
+char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE];
 
 int ID = 0; // Local ID 
 int remoteID = 0; // Remote ID
@@ -58,6 +61,13 @@ void init_semaphores()
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
+
+    snprintf(buffer, BUFFER_SIZE, "/serverMutex%d", ID);
+    sem_unlink(buffer);
+    if ((serverMutex = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void *remote_handler(void *server_socket)
@@ -68,7 +78,16 @@ void *remote_handler(void *server_socket)
 
     while ((message_size = recv(sock, remote_message, MESSAGE_SIZE, 0)) > 0)
     {
-        snprintf(toReceive, BUFFER_SIZE, "%s", remote_message);
+        sem_wait(serverMutex);
+        for(int i = 0; i < MAX_STRINGS_TO_RECEIVE; i++)
+        {
+            if(strcmp(toReceive[i], "") == 0)
+            {
+                strcpy(toReceive[i], remote_message);
+                break;
+            }
+        }
+        sem_post(serverMutex);
         memset(remote_message, 0, sizeof remote_message);
     }
 
@@ -178,25 +197,31 @@ void *compute_handler()
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep(1);
+        sleep((rand() % 5)+1);
 
         //Action 1 (vérification des messages reçus)
-        if(strcmp(toReceive, "") != 0){
-            clockCounter++;
-            printf("Message reçu: %s\n\n", toReceive);
-            bzero(toReceive, sizeof(toReceive));
+        sem_wait(serverMutex);
+        for(int i = 0; i < MAX_STRINGS_TO_RECEIVE; i++)
+        {
+            if(strcmp(toReceive[i], "") != 0)
+            {
+                clockCounter++;
+                printf("Message reçus n°%d : %s\n\n", i+1, toReceive[i]);
+                memset(toReceive[i], 0, sizeof toReceive[i]);
+            }
         }
+        sem_post(serverMutex);
 
         //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser)
         int random = rand() % 2;
         if (random == 0)
         {
-            clockCounter ++;
+            clockCounter++;
             printf("Action locale\n\n");
         }
         else
         {
-            clockCounter ++;
+            clockCounter++;
             //Produce new message
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
