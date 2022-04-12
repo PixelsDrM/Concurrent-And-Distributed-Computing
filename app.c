@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <fcntl.h>
+#include <stdbool.h>
 
 #define MESSAGE_SIZE 2000
 #define BUFFER_SIZE 32
@@ -26,6 +27,8 @@ int ID = 0; // Local ID
 int remoteID[MAX_REMOTE_CLIENTS] = {0}; // Remote IDs
 int remoteClients = 0; // Number of remote clients
 int clockCounter = 0; // Clock counter
+
+bool waitingForSC = false; // Waiting for SC
 
 // Display error message and exit
 int check(int status, const char *message)
@@ -194,6 +197,51 @@ void *client_handler(){
     return 0;
 }
 
+void *all_clients_handler()
+{
+    for(int i = 0; i < remoteClients; i++)
+    {
+        int socket_desc, addr_size;
+        struct sockaddr_un server;
+        char server_reply[MESSAGE_SIZE];
+
+        socket_desc = socket(AF_UNIX, SOCK_STREAM, 0);
+
+        if (socket_desc == -1)
+        {
+            printf("Erreur lors de la création du socket");
+        }
+
+    
+        server.sun_family = AF_UNIX;
+
+        char buffer[BUFFER_SIZE];
+        snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteID[i]);
+        strcpy(server.sun_path, buffer);
+
+        addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
+
+        if (connect(socket_desc, (struct sockaddr *)&server, addr_size) < 0)
+        {
+            perror("Erreur de connexion");
+        }
+
+        char message[MESSAGE_SIZE];
+
+        strcpy(message, "Broadcast");
+
+        if (send(socket_desc, message, strlen(message), 0) < 0)
+        {
+            perror("Erreur d'envoi du message");
+        }
+        bzero(message, sizeof(message));
+
+        close(socket_desc);
+    }
+
+    return 0;   
+}
+
 void *compute_handler()
 {
     // Set seed for random number generator
@@ -217,14 +265,14 @@ void *compute_handler()
         }
         sem_post(serverMutex);
 
-        //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser)
-        int random = rand() % 2;
-        if (random == 0)
+        //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser si pas en mode SC)
+        int random = rand() % 3;
+        if (random == 0 && waitingForSC == false)
         {
             clockCounter++;
             printf("Action locale\n\n");
         }
-        else
+        else if (random == 1 && waitingForSC == false)
         {
             clockCounter++;
             //Produce new message
@@ -233,6 +281,16 @@ void *compute_handler()
             snprintf(toSend, BUFFER_SIZE, "Remote %d : %d", ID, rand() % 100);
             sem_post(clientMutex);
             sem_post(clientFull);
+        }
+        else if (random == 2 && waitingForSC == false)
+        {
+            waitingForSC = true;
+            clockCounter++;
+
+            pthread_t broadcast_thread;
+            check(pthread_create(&broadcast_thread, NULL, *all_clients_handler, NULL), "Impossible de créer le thread");
+
+            waitingForSC = false;
         }
 
         printf("Clock: %d\n\n", clockCounter);
