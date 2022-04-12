@@ -162,7 +162,7 @@ void *client_handler(){
         server.sun_family = AF_UNIX;
 
         int targetClient = rand() % remoteClients;
-        printf("Envoie de '%s' vers un le processus %d...\n\n", toSend, remoteID[targetClient]);
+        printf("Envoie de '%s' vers le processus %d...\n\n", toSend, remoteID[targetClient]);
 
         char buffer[BUFFER_SIZE];
         snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteID[targetClient]);
