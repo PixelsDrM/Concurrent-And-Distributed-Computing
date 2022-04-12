@@ -25,7 +25,7 @@ sem_t* creerSemaphore (unsigned int _compteur)
     
     if (sem_init (semaphore, 0, _compteur) == 0) 
     {
-        
+        printf("Semaphore créé\n");
     }
     else {
         perror("Echec dans la création du sémaphore ! \n");
@@ -39,16 +39,6 @@ int detruireSemaphore (sem_t* _semaphore)
     free (_semaphore); 
     
     return resultat;
-}
-
-int P (sem_t* _semaphore)
-{
-    return sem_wait (_semaphore);
-}
-
-int V (sem_t* _semaphore)
-{
-    return sem_post (_semaphore);
 }
 
 int ID = 0; // Local ID 
@@ -142,64 +132,63 @@ void *server_handler()
 
 void *client_handler(){
     while(1){
-        P (plein);         /* Attente d'un objet */ 
-        P (mutex);         /* On bloque la file */ 
-        char message[32];
-        strcpy(message, to_send);
-        V (mutex);         /* Liberation de la file */ 
-        V (vide);          /* Une place est a prendre */ 
-        printf("%s", message);
+        sem_wait(plein);         /* Attente d'un objet */ 
+        sem_wait(mutex);         /* On bloque la file */ 
+
+        int socket_desc, addr_size;
+        struct sockaddr_un server;
+        char server_reply[MESSAGE_SIZE];
+
+        socket_desc = socket(AF_UNIX, SOCK_STREAM, 0);
+
+        if (socket_desc == -1)
+        {
+            printf("Erreur lors de la création du socket");
+        }
+
+        server.sun_family = AF_UNIX;
+
+        char buffer[32];
+        snprintf(buffer, 32, "/tmp/Socket%d", remoteID);
+        strcpy(server.sun_path, buffer);
+
+        addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
+
+        if (connect(socket_desc, (struct sockaddr *)&server, addr_size) < 0)
+        {
+            perror("Erreur de connexion");
+        }
+
+        if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
+        {
+            printf("Erreur de réception du message depuis le serveur");
+        }
+        printf("%s\n",server_reply);
+        bzero(server_reply, sizeof(server_reply));
+
+        char message[MESSAGE_SIZE];
+
+        snprintf(buffer, 32, "Bonjour de remote %d", ID);
+        strcpy(message, buffer);
+
+        if (send(socket_desc, message, strlen(message), 0) < 0)
+        {
+            perror("Erreur d'envoi du message");
+        }
+        bzero(message, sizeof(message));
+
+        if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
+        {
+            printf("Erreur de réception du message depuis le serveur");
+        }
+        printf("%s\n\n", server_reply);
+        bzero(server_reply, sizeof(server_reply));
+
+        close(socket_desc);
+
+        sem_post(mutex);         /* Liberation de la file */ 
+        sem_post(vide);          /* Une place est a prendre */ 
     }
-    int socket_desc, addr_size;
-    struct sockaddr_un server;
-    char server_reply[MESSAGE_SIZE];
-
-    socket_desc = socket(AF_UNIX, SOCK_STREAM, 0);
-
-    if (socket_desc == -1)
-    {
-        printf("Erreur lors de la création du socket");
-    }
-
-    server.sun_family = AF_UNIX;
-
-    char buffer[32];
-    snprintf(buffer, 32, "/tmp/Socket%d", remoteID);
-    strcpy(server.sun_path, buffer);
-
-    addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
-
-    if (connect(socket_desc, (struct sockaddr *)&server, addr_size) < 0)
-    {
-        perror("Erreur de connexion");
-    }
-
-    if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
-    {
-        printf("Erreur de réception du message depuis le serveur");
-    }
-    printf("%s\n",server_reply);
-    bzero(server_reply, sizeof(server_reply));
-
-    char message[MESSAGE_SIZE];
-
-    snprintf(buffer, 32, "Bonjour de remote %d", ID);
-    strcpy(message, buffer);
-
-    if (send(socket_desc, message, strlen(message), 0) < 0)
-    {
-        perror("Erreur d'envoi du message");
-    }
-    bzero(message, sizeof(message));
-
-    if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
-    {
-        printf("Erreur de réception du message depuis le serveur");
-    }
-    printf("%s\n\n", server_reply);
-    bzero(server_reply, sizeof(server_reply));
-
-    close(socket_desc);
 
     return 0;
 }
@@ -212,7 +201,7 @@ void *compute_handler()
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep(rand() % 10);
+        sleep(20);
 
         //Action 1 (vérification des messages reçus)
         //todo
@@ -229,11 +218,11 @@ void *compute_handler()
             clockCounter ++;
             //Start client thread
             printf("Envoie d'un message vers un processus remote...\n");
-            P (vide);          /* On veut une place vide */ 
-            P (mutex);         /* On bloque la file */ 
+            sem_wait(vide);          /* On veut une place vide */ 
+            sem_wait(mutex);         /* On bloque la file */ 
             strcpy(to_send, "Bonjour de remote");
-            V (mutex);         /* Liberation de la file */ 
-            V (plein);         /* Un objet est a prendre */             
+            sem_post(mutex);         /* Liberation de la file */ 
+            sem_post(plein);         /* Un objet est a prendre */             
         }
     }
 }
