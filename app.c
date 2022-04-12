@@ -11,6 +11,7 @@
 #define MESSAGE_SIZE 2000
 #define BUFFER_SIZE 32
 #define MAX_STRINGS_TO_RECEIVE 10
+#define MAX_REMOTE_CLIENTS 10
 
 sem_t* clientFull;
 sem_t* clientEmpty;
@@ -22,8 +23,9 @@ char toSend[BUFFER_SIZE];
 char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE];
 
 int ID = 0; // Local ID 
-int remoteID = 0; // Remote ID
-int clockCounter = 0;
+int remoteID[MAX_REMOTE_CLIENTS] = {0}; // Remote IDs
+int remoteClients = 0; // Number of remote clients
+int clockCounter = 0; // Clock counter
 
 // Display error message and exit
 int check(int status, const char *message)
@@ -159,8 +161,11 @@ void *client_handler(){
 
         server.sun_family = AF_UNIX;
 
+        int targetClient = rand() % remoteClients;
+        printf("Envoie de '%s' vers un le processus %d...\n\n", toSend, remoteID[targetClient]);
+
         char buffer[BUFFER_SIZE];
-        snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteID);
+        snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteID[targetClient]);
         strcpy(server.sun_path, buffer);
 
         addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
@@ -226,7 +231,6 @@ void *compute_handler()
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
             snprintf(toSend, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
-            printf("Envoie de '%s' vers le processus %d...\n\n", toSend, remoteID);
             sem_post(clientMutex);
             sem_post(clientFull);
         }
@@ -240,11 +244,15 @@ int main(int argc, char *argv[])
     // Usage: ./app <id> <remote_id>
     if (argc < 3)
     {
-        printf("Usage: ./app <id> <remoteid>\n");
+        printf("Usage: ./app <ID> <remoteID> <remoteID2> ...\n");
         return 1;
     }
     ID = atoi(argv[1]);
-    remoteID = atoi(argv[2]);
+    remoteClients = argc - 2;
+    for(int i = 2; i < argc; i++)
+    {
+        remoteID[i-2] = atoi(argv[i]);
+    }
 
     // Create semaphores
     init_semaphores();
