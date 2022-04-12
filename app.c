@@ -9,37 +9,14 @@
 #include <semaphore.h>
 
 #define MESSAGE_SIZE 2000
-
-#define N 32
+#define BUFFER_SIZE 32
 
 sem_t* full;
 sem_t* empty;
 sem_t* mutex;
 
-char to_send[N];
-char to_receive[N];
-
-sem_t* creerSemaphore (unsigned int _compteur)
-{
-    sem_t* semaphore = (sem_t*) malloc (sizeof(sem_t)); 
-    
-    if (sem_init (semaphore, 0, _compteur) == 0) 
-    {
-        printf("Semaphore créé\n");
-    }
-    else {
-        perror("Echec dans la création du sémaphore ! \n");
-    }
-    return semaphore;
-}
-
-int detruireSemaphore (sem_t* _semaphore)
-{
-    unsigned int resultat = sem_destroy(_semaphore);
-    free (_semaphore); 
-    
-    return resultat;
-}
+char to_send[BUFFER_SIZE];
+char to_receive[BUFFER_SIZE];
 
 int ID = 0; // Local ID 
 int remoteID = 0; // Remote ID
@@ -54,6 +31,33 @@ int check(int status, const char *message)
         exit(1);
     }
     return status;
+}
+
+void init_semaphores()
+{
+    // mac os require named semaphores
+    char buffer[BUFFER_SIZE];
+
+    snprintf(buffer, BUFFER_SIZE, "/full%d", ID);
+    sem_unlink(buffer);
+    if ((full = sem_open(buffer, O_CREAT, 0644, 0)) == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    snprintf(buffer, BUFFER_SIZE, "/empty%d", ID);
+    sem_unlink(buffer);
+    if ((empty = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    snprintf(buffer, BUFFER_SIZE, "/mutex%d", ID);
+    sem_unlink(buffer);
+    if ((mutex = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
 }
 
 void *remote_handler(void *server_socket)
@@ -97,8 +101,8 @@ void *server_handler()
 
     server.sun_family = AF_UNIX;
     
-    char buffer[32];
-    snprintf(buffer, 32, "/tmp/Socket%d", ID);
+    char buffer[BUFFER_SIZE];
+    snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", ID);
     // Remove server socket if it exists
     unlink(buffer);
     strcpy(server.sun_path, buffer);
@@ -148,8 +152,8 @@ void *client_handler(){
 
         server.sun_family = AF_UNIX;
 
-        char buffer[32];
-        snprintf(buffer, 32, "/tmp/Socket%d", remoteID);
+        char buffer[BUFFER_SIZE];
+        snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteID);
         strcpy(server.sun_path, buffer);
 
         addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
@@ -195,12 +199,12 @@ void *client_handler(){
 void *compute_handler()
 {
     // Set seed for random number generator
-    srand(time(NULL));
+    srand(time(NULL)+ID);
 
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep(rand() % 5);
+        sleep((rand() % 5)+1);
 
         //Action 1 (vérification des messages reçus)
         //todo
@@ -219,7 +223,7 @@ void *compute_handler()
             printf("Envoie d'un message vers un processus remote...\n");
             sem_wait(empty);
             sem_wait(mutex);
-            snprintf(to_send, 32, "Bonjour de remote %d, %d", ID, rand() % 100);
+            snprintf(to_send, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
             sem_post(mutex);
             sem_post(full);
         }
@@ -237,9 +241,7 @@ int main(int argc, char *argv[])
     ID = atoi(argv[1]);
     remoteID = atoi(argv[2]);
 
-    full = creerSemaphore (0);
-    empty  = creerSemaphore (N);
-    mutex = creerSemaphore (1);
+    init_semaphores();
         
     // Start server thread
     pthread_t server_thread;
@@ -253,12 +255,8 @@ int main(int argc, char *argv[])
     pthread_t compute_thread;
     check(pthread_create(&compute_thread, NULL, *compute_handler, NULL), "Impossible de créer le thread compute");
 
-    // Wait for threads to finish
+    // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
-    
-    detruireSemaphore (full);
-    detruireSemaphore (empty);
-    detruireSemaphore (mutex);
     
     return 0;
 }
