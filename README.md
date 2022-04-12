@@ -9,5 +9,5 @@ gcc app.c -o app.out -lpthread
 USAGE
 
 ```bash
-./app <id> <remoteid>
+./app <ID> <remoteID> <remoteID2> ...
 ```
