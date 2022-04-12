@@ -3,20 +3,20 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <fcntl.h>
 
 #define MESSAGE_SIZE 2000
 #define BUFFER_SIZE 32
 
-sem_t* full;
-sem_t* empty;
-sem_t* mutex;
+sem_t* clientFull;
+sem_t* clientEmpty;
+sem_t* clientMutex;
 
-char to_send[BUFFER_SIZE];
-char to_receive[BUFFER_SIZE];
+char toSend[BUFFER_SIZE];
+char toReceive[BUFFER_SIZE];
 
 int ID = 0; // Local ID 
 int remoteID = 0; // Remote ID
@@ -38,23 +38,23 @@ void init_semaphores()
     // mac os require named semaphores
     char buffer[BUFFER_SIZE];
 
-    snprintf(buffer, BUFFER_SIZE, "/full%d", ID);
+    snprintf(buffer, BUFFER_SIZE, "/clientFull%d", ID);
     sem_unlink(buffer);
-    if ((full = sem_open(buffer, O_CREAT, 0644, 0)) == SEM_FAILED) {
+    if ((clientFull = sem_open(buffer, O_CREAT, 0644, 0)) == SEM_FAILED) {
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
 
-    snprintf(buffer, BUFFER_SIZE, "/empty%d", ID);
+    snprintf(buffer, BUFFER_SIZE, "/clientEmpty%d", ID);
     sem_unlink(buffer);
-    if ((empty = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+    if ((clientEmpty = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
 
-    snprintf(buffer, BUFFER_SIZE, "/mutex%d", ID);
+    snprintf(buffer, BUFFER_SIZE, "/clientMutex%d", ID);
     sem_unlink(buffer);
-    if ((mutex = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+    if ((clientMutex = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
@@ -68,17 +68,12 @@ void *remote_handler(void *server_socket)
 
     while ((message_size = recv(sock, remote_message, MESSAGE_SIZE, 0)) > 0)
     {
-        printf("Message reçus: %s\n", remote_message);
-
-        const char OK_MESSAGE[] = "Remote: Message bien reçu";
-        write(sock, OK_MESSAGE, strlen(OK_MESSAGE));
-
+        snprintf(toReceive, BUFFER_SIZE, "%s", remote_message);
         memset(remote_message, 0, sizeof remote_message);
     }
 
     if (message_size == 0)
     {
-        printf("Remote déconnecté\n\n");
         fflush(stdout);
     }
     else if (message_size == -1)
@@ -113,15 +108,8 @@ void *server_handler()
 
     check(listen(server_socket, 3), "Erreur lors de l'écoute du socket");
 
-    printf("En attente de connexions entrantes...\n\n");
-
     while ((new_socket = accept(server_socket, (struct sockaddr *)&remote, (socklen_t *)&addr_size)))
     {
-        printf("Connexion entrante...\n");
-
-        message = "Remote: Connexion établie";
-        write(new_socket, message, strlen(message));
-
         pthread_t remote_thread;
         new_sock = malloc(sizeof(int));
         *new_sock = new_socket;
@@ -136,8 +124,8 @@ void *server_handler()
 
 void *client_handler(){
     while(1){
-        sem_wait(full); 
-        sem_wait(mutex);
+        sem_wait(clientFull); 
+        sem_wait(clientMutex);
 
         int socket_desc, addr_size;
         struct sockaddr_un server;
@@ -163,16 +151,9 @@ void *client_handler(){
             perror("Erreur de connexion");
         }
 
-        if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
-        {
-            printf("Erreur de réception du message depuis le serveur");
-        }
-        printf("%s\n",server_reply);
-        bzero(server_reply, sizeof(server_reply));
-
         char message[MESSAGE_SIZE];
 
-        strcpy(message, to_send);
+        strcpy(message, toSend);
 
         if (send(socket_desc, message, strlen(message), 0) < 0)
         {
@@ -180,17 +161,10 @@ void *client_handler(){
         }
         bzero(message, sizeof(message));
 
-        if (recv(socket_desc, server_reply, sizeof(server_reply), 0) < 0)
-        {
-            printf("Erreur de réception du message depuis le serveur");
-        }
-        printf("%s\n\n", server_reply);
-        bzero(server_reply, sizeof(server_reply));
-
         close(socket_desc);
 
-        sem_post(mutex);
-        sem_post(empty);
+        sem_post(clientMutex);
+        sem_post(clientEmpty);
     }
 
     return 0;
@@ -199,15 +173,18 @@ void *client_handler(){
 void *compute_handler()
 {
     // Set seed for random number generator
-    srand(time(NULL)+ID);
+    srand(time(NULL));
 
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep((rand() % 5)+1);
+        sleep(1);
 
         //Action 1 (vérification des messages reçus)
-        //todo
+        if(strcmp(toReceive, "") != 0){
+            printf("Message reçu: %s\n\n", toReceive);
+            bzero(toReceive, sizeof(toReceive));
+        }
 
         //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser)
         int random = rand() % 2;
@@ -219,13 +196,13 @@ void *compute_handler()
         else
         {
             clockCounter ++;
-            //Start client thread
-            printf("Envoie d'un message vers un processus remote...\n");
-            sem_wait(empty);
-            sem_wait(mutex);
-            snprintf(to_send, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
-            sem_post(mutex);
-            sem_post(full);
+            //Produce new message
+            //printf("Envoie d'un message vers un processus remote...\n");
+            sem_wait(clientEmpty);
+            sem_wait(clientMutex);
+            snprintf(toSend, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
+            sem_post(clientMutex);
+            sem_post(clientFull);
         }
     }
 }
@@ -241,6 +218,7 @@ int main(int argc, char *argv[])
     ID = atoi(argv[1]);
     remoteID = atoi(argv[2]);
 
+    // Create semaphores
     init_semaphores();
         
     // Start server thread
