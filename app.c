@@ -201,7 +201,7 @@ void *compute_handler()
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep(20);
+        sleep(rand() % 5);
 
         //Action 1 (vérification des messages reçus)
         //todo
