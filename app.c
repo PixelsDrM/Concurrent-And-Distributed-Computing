@@ -197,7 +197,7 @@ void *client_handler(){
 void *compute_handler()
 {
     // Set seed for random number generator
-    srand(time(NULL));
+    srand(time(NULL)+ID);
 
     // Start computing loop
     while(1){
@@ -211,7 +211,7 @@ void *compute_handler()
             if(strcmp(toReceive[i], "") != 0)
             {
                 clockCounter++;
-                printf("Message reçu n°%d : %s\n\n", i+1, toReceive[i]);
+                printf("Message reçu n°%d > %s\n\n", i+1, toReceive[i]);
                 memset(toReceive[i], 0, sizeof toReceive[i]);
             }
         }
@@ -230,12 +230,12 @@ void *compute_handler()
             //Produce new message
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
-            snprintf(toSend, BUFFER_SIZE, "Bonjour de remote %d, %d", ID, rand() % 100);
+            snprintf(toSend, BUFFER_SIZE, "Remote %d : %d", ID, rand() % 100);
             sem_post(clientMutex);
             sem_post(clientFull);
         }
 
-        //printf("Clock: %d\n\n", clockCounter);
+        printf("Clock: %d\n\n", clockCounter);
     }
 }
 
