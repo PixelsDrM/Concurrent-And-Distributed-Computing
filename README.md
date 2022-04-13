@@ -3,7 +3,7 @@
 COMPILE
 
 ```bash
-gcc app.c -o app.out -lpthread
+gcc app.c -o app.out -lpthread -Wall
 ```
 
 USAGE
