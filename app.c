@@ -19,14 +19,19 @@ sem_t* clientMutex;
 
 sem_t* serverMutex;
 
+struct Message {
+    char* message;
+    int remoteID;
+};
+
 char toSend[BUFFER_SIZE]; // Buffer for the string to send
 char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
 
 int ID = 0; // Local ID 
 int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
 int remoteClientsNumber = 0; // Number of remote clients
-int localClock = 0; // Clock counter
 
+int localClock = 0; // Clock counter
 bool waitingForSC = false; // Waiting for SC
 int replyCount = 0; // Number of replies received
 
@@ -41,6 +46,7 @@ int check(int status, const char *message)
     return status;
 }
 
+// Create named semaphores
 void init_semaphores()
 {
     // mac os require named semaphores
@@ -76,7 +82,8 @@ void init_semaphores()
     }
 }
 
-void *remote_handler(void *server_socket)
+// Receive a message from a remote client
+void *reception_handler(void *server_socket)
 {
     int sock = *(int *)server_socket;
     unsigned int message_size;
@@ -111,6 +118,7 @@ void *remote_handler(void *server_socket)
     return 0;
 }
 
+// Wait for connections from remote client and pass them to a reception_handler thread
 void *server_handler()
 {
     int server_socket, addr_size, new_socket, *new_sock;
@@ -122,7 +130,6 @@ void *server_handler()
     
     char buffer[BUFFER_SIZE];
     snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", ID);
-    // Remove server socket if it exists
     unlink(buffer);
     strcpy(server.sun_path, buffer);
     
@@ -134,11 +141,11 @@ void *server_handler()
 
     while ((new_socket = accept(server_socket, (struct sockaddr *)&remote, (socklen_t *)&addr_size)))
     {
-        pthread_t remote_thread;
+        pthread_t reception_thread;
         new_sock = malloc(sizeof(int));
         *new_sock = new_socket;
 
-        check(pthread_create(&remote_thread, NULL, *remote_handler, (void *)new_sock), "Impossible de créer le thread");
+        check(pthread_create(&reception_thread, NULL, *reception_handler, (void *)new_sock), "Impossible de créer le thread");
     }
 
     check(new_socket, "Le serveur n'a pas réussit à accepter la connexion");
@@ -146,6 +153,7 @@ void *server_handler()
     return 0;
 }
 
+// Send a random message to a random client (Consume messages produced by the compute thread)
 void *random_client_handler(){
     while(1){
         sem_wait(clientFull); 
@@ -191,9 +199,11 @@ void *random_client_handler(){
     return 0;
 }
 
-void *client_handler(void *senderID)
+// Send a message to a specific client
+void *client_handler(void *message)
 {
-    int sender = *(int *)senderID;
+    struct Message *msg = (struct Message *)message;    
+
     int socket_desc, addr_size;
     struct sockaddr_un server;
 
@@ -207,7 +217,7 @@ void *client_handler(void *senderID)
     server.sun_family = AF_UNIX;
 
     char buffer[BUFFER_SIZE];
-    snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", sender);
+    snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", msg->remoteID);
     strcpy(server.sun_path, buffer);
 
     addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
@@ -217,61 +227,54 @@ void *client_handler(void *senderID)
         perror("Erreur de connexion");
     }
 
-    char message[BUFFER_SIZE];
-    snprintf(message, BUFFER_SIZE, "%d;%d;REPLY", ID, localClock);
+    char messageToSend[BUFFER_SIZE];
+    snprintf(messageToSend, BUFFER_SIZE, "%d;%d;%s", ID, localClock, msg->message);
 
-    if (send(socket_desc, message, strlen(message), 0) < 0)
+    if (send(socket_desc, messageToSend, strlen(messageToSend), 0) < 0)
     {
         perror("Erreur d'envoi du message");
     }
 
     close(socket_desc);
+    free(message);
 
     return 0;
 }
 
-void *broadcast_handler()
+// Send a message to all clients
+void *broadcast_handler(void *message)
 {
+    char *messageToSend = (char *)message;
+ 
     for(int i = 0; i < remoteClientsNumber; i++)
     {
-        int socket_desc, addr_size;
-        struct sockaddr_un server;
+        struct Message *msg = malloc(sizeof(struct Message));
+        msg->message = messageToSend;
+        msg->remoteID = remoteIDs[i];
 
-        socket_desc = socket(AF_UNIX, SOCK_STREAM, 0);
-
-        if (socket_desc == -1)
-        {
-            printf("Erreur lors de la création du socket");
-        }
-
-        server.sun_family = AF_UNIX;
-
-        char buffer[BUFFER_SIZE];
-        snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteIDs[i]);
-        strcpy(server.sun_path, buffer);
-
-        addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
-
-        if (connect(socket_desc, (struct sockaddr *)&server, addr_size) < 0)
-        {
-            perror("Erreur de connexion");
-        }
-
-        char message[BUFFER_SIZE];
-        snprintf(message, BUFFER_SIZE, "%d;%d;REQUEST", ID, localClock);
-
-        if (send(socket_desc, message, strlen(message), 0) < 0)
-        {
-            perror("Erreur d'envoi du message");
-        }
-        bzero(message, sizeof(message));
-
-        close(socket_desc);
+        pthread_t client_thread;
+        check(pthread_create(&client_thread, NULL, *client_handler, (void *)msg), "Impossible de créer le thread");
     }
 
-    return 0;   
+    return 0;
 }
 
+void *SC_handler(){
+
+    sleep(10);
+    printf("SC ended\n");
+
+    pthread_t release_thread;
+    pthread_create(&release_thread, NULL, broadcast_handler, "RELEASE");
+    pthread_join(release_thread, NULL);
+
+    waitingForSC = false;
+    replyCount = 0;
+
+    return 0;
+}
+
+// Read messages, reply to requests, make local actions, and send messages to other clients (Produce messages consumed by the random client thread)
 void *compute_handler()
 {
     // Set seed for random number generator
@@ -312,9 +315,13 @@ void *compute_handler()
                         // Check if message is a request
                         if(strcmp(token, "REQUEST") == 0)
                         {
+                            struct Message *msg = malloc(sizeof(struct Message));
+                            msg->message = "REPLY";
+                            msg->remoteID = senderID;
+
                             // Send reply
                             pthread_t client_thread;
-                            check(pthread_create(&client_thread, NULL, *client_handler, (void *)&senderID), "Impossible de créer le thread");
+                            check(pthread_create(&client_thread, NULL, *client_handler, (void *)msg), "Impossible de créer le thread");
                             pthread_join(client_thread, NULL);
                         }
                         // Check if message is a reply
@@ -323,8 +330,8 @@ void *compute_handler()
                             replyCount++;
                             if(replyCount == remoteClientsNumber)
                             {
-                                waitingForSC = false;
-                                replyCount = 0;
+                                pthread_t SC_thread;
+                                check(pthread_create(&SC_thread, NULL, *SC_handler, NULL), "Impossible de créer le thread");
                             }
                         }
                     }
@@ -352,14 +359,14 @@ void *compute_handler()
             sem_post(clientMutex);
             sem_post(clientFull);
         }
-        else if (random == 2 && waitingForSC == false)
+        else if (random == 2 && waitingForSC == false && ID == 1)
         {
             localClock++;
             waitingForSC = true;
 
             printf("Clock: %d >> Envoie de Request\n\n", localClock);
             pthread_t broadcast_thread;
-            check(pthread_create(&broadcast_thread, NULL, *broadcast_handler, NULL), "Impossible de créer le thread");
+            check(pthread_create(&broadcast_thread, NULL, *broadcast_handler, "REQUEST"), "Impossible de créer le thread");
             pthread_join(broadcast_thread, NULL);
         }
     }
