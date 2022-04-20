@@ -35,6 +35,34 @@ int localClock = 0; // Clock counter
 bool waitingForSC = false; // Waiting for SC
 int replyCount = 0; // Number of replies received
 
+typedef struct {
+    size_t head;
+    size_t tail;
+    size_t size;
+    int* data;
+} queue_t;
+
+int queue_read(queue_t *queue) {
+    if (queue->tail == queue->head) {
+        return 0;
+    }
+    int handle = queue->data[queue->tail];
+    queue->data[queue->tail] = 0;
+    queue->tail = (queue->tail + 1) % queue->size;
+    return handle;
+}
+
+int queue_write(queue_t *queue, int handle) {
+    if (((queue->head + 1) % queue->size) == queue->tail) {
+        return -1;
+    }
+    queue->data[queue->head] = handle;
+    queue->head = (queue->head + 1) % queue->size;
+    return 0;
+}
+
+queue_t clientsWaitingForSC; // Clients waiting for SC
+
 // Display error message and exit
 int check(int status, const char *message)
 {
@@ -202,7 +230,7 @@ void *random_client_handler(){
 // Send a message to a specific client
 void *client_handler(void *message)
 {
-    struct Message *msg = (struct Message *)message;    
+    struct Message *msg = (struct Message *)message;
 
     int socket_desc, addr_size;
     struct sockaddr_un server;
@@ -259,10 +287,11 @@ void *broadcast_handler(void *message)
     return 0;
 }
 
+// Critical section
 void *SC_handler(){
 
     sleep(10);
-    printf("SC ended\n");
+    printf("SC ended\n\n");
 
     pthread_t release_thread;
     pthread_create(&release_thread, NULL, broadcast_handler, "RELEASE");
@@ -334,6 +363,10 @@ void *compute_handler()
                                 check(pthread_create(&SC_thread, NULL, *SC_handler, NULL), "Impossible de créer le thread");
                             }
                         }
+                        else if(strcmp(token, "RELEASE") == 0)
+                        {
+                            //TODO
+                        }
                     }
                     token = strtok(NULL, ";");
                 }
@@ -355,19 +388,19 @@ void *compute_handler()
             //Produce new message
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
-            snprintf(toSend, BUFFER_SIZE, "%d;%d;%d", ID, localClock ,rand() % 100);
+            snprintf(toSend, BUFFER_SIZE, "%d;%d;%d", ID, localClock, rand() % 100);
             sem_post(clientMutex);
             sem_post(clientFull);
         }
-        else if (random == 2 && waitingForSC == false && ID == 1)
+        else if (random == 2 && waitingForSC == false)
         {
             localClock++;
             waitingForSC = true;
 
             printf("Clock: %d >> Envoie de Request\n\n", localClock);
-            pthread_t broadcast_thread;
-            check(pthread_create(&broadcast_thread, NULL, *broadcast_handler, "REQUEST"), "Impossible de créer le thread");
-            pthread_join(broadcast_thread, NULL);
+            pthread_t request_thread;
+            check(pthread_create(&request_thread, NULL, *broadcast_handler, "REQUEST"), "Impossible de créer le thread");
+            pthread_join(request_thread, NULL);
         }
     }
 }
@@ -388,6 +421,8 @@ int main(int argc, char *argv[])
     {
         remoteIDs[i-2] = atoi(argv[i]);
     }
+    queue_t CWFSC = {0, 0, MAX_CLIENTS+1, malloc(sizeof(int) * MAX_CLIENTS+1)};
+    clientsWaitingForSC = CWFSC;
 
     // Create semaphores
     init_semaphores();
@@ -406,6 +441,8 @@ int main(int argc, char *argv[])
 
     // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
-    
+
+    free(clientsWaitingForSC.data);
+
     return 0;
 }
