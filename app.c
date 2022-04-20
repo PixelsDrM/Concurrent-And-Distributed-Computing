@@ -1,36 +1,34 @@
+#include <fcntl.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <fcntl.h>
-#include <stdbool.h>
 
-#define MESSAGE_SIZE 2000
-#define BUFFER_SIZE 32
-#define MAX_STRINGS_TO_RECEIVE 10
-#define MAX_REMOTE_CLIENTS 10
+#define BUFFER_SIZE 64 // Maximum size of a message
+#define MAX_CLIENTS 10 // Maximum number of clients
+#define MAX_STRINGS_TO_RECEIVE MAX_CLIENTS*2 // Maximum number of strings to receive
 
 sem_t* clientFull;
-sem_t* clientEmpty;
+sem_t* clientEmpty; 
 sem_t* clientMutex;
 
 sem_t* serverMutex;
 
-char toSend[BUFFER_SIZE];
-char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE];
+char toSend[BUFFER_SIZE]; // Buffer for the string to send
+char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
 
 int ID = 0; // Local ID 
-int remoteIDs[MAX_REMOTE_CLIENTS] = {0}; // Remote IDs
+int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
 int remoteClientsNumber = 0; // Number of remote clients
 int localClock = 0; // Clock counter
 
-int replyCount = 0; // Number of replies
-
 bool waitingForSC = false; // Waiting for SC
+int replyCount = 0; // Number of replies received
 
 // Display error message and exit
 int check(int status, const char *message)
@@ -46,6 +44,7 @@ int check(int status, const char *message)
 void init_semaphores()
 {
     // mac os require named semaphores
+
     char buffer[BUFFER_SIZE];
 
     snprintf(buffer, BUFFER_SIZE, "/clientFull%d", ID);
@@ -81,9 +80,9 @@ void *remote_handler(void *server_socket)
 {
     int sock = *(int *)server_socket;
     unsigned int message_size;
-    char remote_message[MESSAGE_SIZE];
+    char remote_message[BUFFER_SIZE];
 
-    while ((message_size = recv(sock, remote_message, MESSAGE_SIZE, 0)) > 0)
+    while ((message_size = recv(sock, remote_message, BUFFER_SIZE, 0)) > 0)
     {
         sem_wait(serverMutex);
         for(int i = 0; i < MAX_STRINGS_TO_RECEIVE; i++)
@@ -218,8 +217,8 @@ void *client_handler(void *senderID)
         perror("Erreur de connexion");
     }
 
-    char message[MESSAGE_SIZE];
-    snprintf(message, MESSAGE_SIZE, "%d;%d;REPLY", ID, localClock);
+    char message[BUFFER_SIZE];
+    snprintf(message, BUFFER_SIZE, "%d;%d;REPLY", ID, localClock);
 
     if (send(socket_desc, message, strlen(message), 0) < 0)
     {
@@ -258,8 +257,8 @@ void *broadcast_handler()
             perror("Erreur de connexion");
         }
 
-        char message[MESSAGE_SIZE];
-        snprintf(message, MESSAGE_SIZE, "%d;%d;REQUEST", ID, localClock);
+        char message[BUFFER_SIZE];
+        snprintf(message, BUFFER_SIZE, "%d;%d;REQUEST", ID, localClock);
 
         if (send(socket_desc, message, strlen(message), 0) < 0)
         {
@@ -290,10 +289,11 @@ void *compute_handler()
             if(strcmp(toReceive[i], "") != 0)
             {
                 printf("Message reçu n°%d > %s\n\n", i+1, toReceive[i]);
+
                 int senderID = 0;
                 int senderClock = 0;
-                // Split message with ';'
                 char *token = strtok(toReceive[i], ";");
+                
                 for(int j = 0; j < 3; j++)
                 {
                     if(j == 0)
@@ -367,14 +367,15 @@ void *compute_handler()
 
 int main(int argc, char *argv[])
 {
-    // Usage: ./app <ID> <remoteID1> <remoteID2> ...
-    if (argc < 3)
+    // Usage: ./app <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
+    if (argc < 3 || argc-1 > MAX_CLIENTS)
     {
-        printf("Usage: ./app <ID> <remoteID1> <remoteID2> ...\n");
+        printf("Usage: ./app <ID1> <remoteID2> <remoteID3> ... <remoteID%d>\n", MAX_CLIENTS);
         return 1;
     }
+
+    // Get arguments
     ID = atoi(argv[1]);
-    
     remoteClientsNumber = argc - 2;
     for(int i = 2; i < argc; i++)
     {

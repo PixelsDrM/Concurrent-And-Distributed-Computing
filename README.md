@@ -9,7 +9,7 @@ gcc app.c -o app.out -lpthread -Wall
 USAGE
 
 ```bash
-./app <ID> <remoteID1> <remoteID2> ...
+./app <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
 ```
 
 EXEMPLE
