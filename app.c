@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,29 +12,22 @@
 
 #define BUFFER_SIZE 64 // Maximum size of a message
 #define MAX_CLIENTS 10 // Maximum number of clients
-#define MAX_STRINGS_TO_RECEIVE MAX_CLIENTS*2 // Maximum number of strings to receive
+#define MAX_STRINGS_TO_RECEIVE MAX_CLIENTS*3 // Maximum number of strings to receive
 
 sem_t* clientFull;
-sem_t* clientEmpty; 
+sem_t* clientEmpty;
 sem_t* clientMutex;
 
 sem_t* serverMutex;
+
+pthread_t server_thread;
+pthread_t client_thread;
+pthread_t compute_thread;
 
 struct Message {
     char* message;
     int remoteID;
 };
-
-char toSend[BUFFER_SIZE]; // Buffer for the string to send
-char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
-
-int ID = 0; // Local ID 
-int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
-int remoteClientsNumber = 0; // Number of remote clients
-
-int localClock = 0; // Clock counter
-bool waitingForSC = false; // Waiting for SC
-int replyCount = 0; // Number of replies received
 
 typedef struct {
     size_t head;
@@ -42,6 +36,20 @@ typedef struct {
     int* data;
 } queue_t;
 
+char toSend[BUFFER_SIZE]; // Buffer for the string to send
+char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
+
+int ID = 0; // Local ID
+int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
+int remoteClientsNumber = 0; // Number of remote clients
+
+int localClock = 0; // Clock counter
+
+bool waitingForCS = false; // Waiting for critical section
+int replyCount = 0; // Number of replies received
+queue_t clientsWaitingForCS; // Clients waiting for critical section
+
+// Initialize a queue with a given size 
 int queue_init(queue_t* q, size_t size) {
     q->data = (int*) malloc(size * sizeof(int));
     if (!q->data) {
@@ -52,7 +60,8 @@ int queue_init(queue_t* q, size_t size) {
     return 0;
 }
 
-int queue_write(queue_t *queue, int handle) {
+// Add an element at the end of the queue
+int queue_insert(queue_t *queue, int handle) {
     if (((queue->head + 1) % queue->size) == queue->tail) {
         return -1;
     }
@@ -61,16 +70,24 @@ int queue_write(queue_t *queue, int handle) {
     return 0;
 }
 
-int queue_read(queue_t *queue) {
+// Remove an element from the queue by its value
+int queue_remove(queue_t *queue, int handle) {
     if (queue->tail == queue->head) {
-        return 0;
+        return -1;
     }
-    int handle = queue->data[queue->tail];
-    queue->data[queue->tail] = 0;
-    queue->tail = (queue->tail + 1) % queue->size;
-    return handle;
+    int i = queue->tail;
+    while (i != queue->head) {
+        if (queue->data[i] == handle) {
+            queue->data[i] = 0;
+            queue->tail = (queue->tail + 1) % queue->size;
+            return 0;
+        }
+        i = (i + 1) % queue->size;
+    }
+    return -1;
 }
 
+// Get the first element of the queue without removing it
 int queue_peek(queue_t *queue) {
     if (queue->tail == queue->head) {
         return 0;
@@ -78,23 +95,11 @@ int queue_peek(queue_t *queue) {
     return queue->data[queue->tail];
 } 
 
+// Destroy the queue
 int queue_destroy(queue_t *queue) {
     free(queue->data);
     return 0;
 } 
-
-queue_t clientsWaitingForSC; // Clients waiting for SC
-
-// Display error message and exit
-int check(int status, const char *message)
-{
-    if (status == -1)
-    {
-        perror(message);
-        exit(1);
-    }
-    return status;
-}
 
 // Create named semaphores
 void init_semaphores()
@@ -130,6 +135,65 @@ void init_semaphores()
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
+}
+
+// Destroy named semaphores
+void destroy_semaphores()
+{
+    char buffer[BUFFER_SIZE];
+
+    snprintf(buffer, BUFFER_SIZE, "/clientFull%d", ID);
+    sem_unlink(buffer);
+    sem_close(clientFull);
+
+    snprintf(buffer, BUFFER_SIZE, "/clientEmpty%d", ID);
+    sem_unlink(buffer);
+    sem_close(clientEmpty);
+
+    snprintf(buffer, BUFFER_SIZE, "/clientMutex%d", ID);
+    sem_unlink(buffer);
+    sem_close(clientMutex);
+
+    snprintf(buffer, BUFFER_SIZE, "/serverMutex%d", ID);
+    sem_unlink(buffer);
+    sem_close(serverMutex);
+}
+
+// Clean everything and exit
+void cleanup(){
+    // Cleanup
+    printf("\nCleaning up...\n");
+
+    // Stop threads
+    pthread_cancel(server_thread);
+    pthread_cancel(client_thread);
+    pthread_cancel(compute_thread);
+
+    // Destroy queue
+    queue_destroy(&clientsWaitingForCS);
+
+    // Destroy named semaphores
+    destroy_semaphores();
+
+    // Delete UNIX socket
+    unlink("/tmp/SocketCS");
+    char buffer[BUFFER_SIZE];
+    snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", ID);
+    unlink(buffer);
+
+    printf("Done!\n");
+    exit(0);
+}
+
+// Display error message and exit
+int check(int status, const char *message)
+{
+    if (status == -1)
+    {
+        perror(message);
+        exit(1);
+    }
+    return status;
 }
 
 // Receive a message from a remote client
@@ -199,6 +263,8 @@ void *server_handler()
     }
 
     check(new_socket, "Le serveur n'a pas réussit à accepter la connexion");
+
+    close(server_socket);
 
     return 0;
 }
@@ -310,16 +376,33 @@ void *broadcast_handler(void *message)
 }
 
 // Critical section
-void *SC_handler(){
+void *CS_handler(){
 
-    sleep(10);
-    printf("SC ended\n\n");
+    printf("Clock: %d >> Entrer en section critique\n\n", localClock);
+
+    /*
+    int server_socket, addr_size;
+    struct sockaddr_un server;
+    check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
+    server.sun_family = AF_UNIX;
+    strcpy(server.sun_path, "/tmp/SocketCS");
+    addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
+    check(bind(server_socket, (struct sockaddr *)&server, addr_size), "Erreur lors du bind du socket");
+    check(listen(server_socket, 3), "Erreur lors de l'écoute du socket");
+
+    sleep((rand() % remoteClientsNumber) + 1);
+    unlink("/tmp/SocketCS");
+    */
+
+    sleep((rand() % remoteClientsNumber) + 1);
+    printf("Clock: %d >> Sortie de section critique\n\n", localClock);
 
     pthread_t release_thread;
     pthread_create(&release_thread, NULL, broadcast_handler, "RELEASE");
     pthread_join(release_thread, NULL);
 
-    waitingForSC = false;
+    queue_remove(&clientsWaitingForCS, ID);
+    waitingForCS = false;
     replyCount = 0;
 
     return 0;
@@ -334,7 +417,7 @@ void *compute_handler()
     // Start computing loop
     while(1){
         // Sleep for a random amount of time in seconds
-        sleep((rand() % 5)+1);
+        sleep((rand() % remoteClientsNumber) + 1);
 
         //Action 1 (vérification des messages reçus)
         sem_wait(serverMutex);
@@ -342,7 +425,7 @@ void *compute_handler()
         {
             if(strcmp(toReceive[i], "") != 0)
             {
-                printf("Message reçu n°%d > %s\n\n", i+1, toReceive[i]);
+                printf("Clock: %d >> Message reçu > %s\n\n", localClock, toReceive[i]);
 
                 int senderID = 0;
                 int senderClock = 0;
@@ -366,6 +449,8 @@ void *compute_handler()
                         // Check if message is a request
                         if(strcmp(token, "REQUEST") == 0)
                         {
+                            queue_insert(&clientsWaitingForCS, senderID);
+
                             struct Message *msg = malloc(sizeof(struct Message));
                             msg->message = "REPLY";
                             msg->remoteID = senderID;
@@ -376,18 +461,24 @@ void *compute_handler()
                             pthread_join(client_thread, NULL);
                         }
                         // Check if message is a reply
-                        else if(strcmp(token, "REPLY") == 0 && waitingForSC == true)
+                        else if(strcmp(token, "REPLY") == 0)
                         {
                             replyCount++;
-                            if(replyCount == remoteClientsNumber)
+                            if(replyCount == remoteClientsNumber && queue_peek(&clientsWaitingForCS) == ID)
                             {
-                                pthread_t SC_thread;
-                                check(pthread_create(&SC_thread, NULL, *SC_handler, NULL), "Impossible de créer le thread");
+                                pthread_t CS_thread;
+                                check(pthread_create(&CS_thread, NULL, *CS_handler, NULL), "Impossible de créer le thread");
                             }
                         }
+                        // Check if message is a release
                         else if(strcmp(token, "RELEASE") == 0)
                         {
-                            //TODO
+                            queue_remove(&clientsWaitingForCS, senderID);
+                            if(replyCount == remoteClientsNumber && queue_peek(&clientsWaitingForCS) == ID)
+                            {
+                                pthread_t CS_thread;
+                                check(pthread_create(&CS_thread, NULL, *CS_handler, NULL), "Impossible de créer le thread");
+                            }
                         }
                     }
                     token = strtok(NULL, ";");
@@ -397,16 +488,17 @@ void *compute_handler()
         }
         sem_post(serverMutex);
 
-        //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser si pas en mode SC)
+        //Action 2 (tirage d’un nombre au hasard qui permet de savoir quelle action réaliser si pas en section critique)
         int random = rand() % 3;
-        if (random == 0 && waitingForSC == false)
+        if (random == 0 && waitingForCS == false)
         {
             localClock++;
             printf("Clock: %d >> Action locale\n\n", localClock);
         }
-        else if (random == 1 && waitingForSC == false)
+        else if (random == 1 && waitingForCS == false)
         {
             localClock++;
+
             //Produce new message
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
@@ -414,21 +506,39 @@ void *compute_handler()
             sem_post(clientMutex);
             sem_post(clientFull);
         }
-        else if (random == 2 && waitingForSC == false)
+        else if (random == 2 && waitingForCS == false)
         {
             localClock++;
-            waitingForSC = true;
+            waitingForCS = true;
 
             printf("Clock: %d >> Envoie de Request\n\n", localClock);
+
             pthread_t request_thread;
             check(pthread_create(&request_thread, NULL, *broadcast_handler, "REQUEST"), "Impossible de créer le thread");
             pthread_join(request_thread, NULL);
+
+            queue_insert(&clientsWaitingForCS, ID);
         }
     }
 }
 
+void init_threads()
+{
+    // Start server thread
+    check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
+
+    // Start client thread
+    check(pthread_create(&client_thread, NULL, *random_client_handler, NULL), "Impossible de créer le thread client");
+
+    //Start compute thread
+    check(pthread_create(&compute_thread, NULL, *compute_handler, NULL), "Impossible de créer le thread compute");
+}
+
 int main(int argc, char *argv[])
 {
+    // Handle CTRL+C
+    signal(SIGINT, cleanup);
+    
     // Usage: ./app <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
     if (argc < 3 || argc-1 > MAX_CLIENTS)
     {
@@ -443,27 +553,18 @@ int main(int argc, char *argv[])
     {
         remoteIDs[i-2] = atoi(argv[i]);
     }
-    queue_init(&clientsWaitingForSC, MAX_CLIENTS+1);
+    
+    // Create queue
+    queue_init(&clientsWaitingForCS, MAX_CLIENTS+1);
 
     // Create semaphores
     init_semaphores();
-        
-    // Start server thread
-    pthread_t server_thread;
-    check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
-
-    // Start client thread
-    pthread_t client_thread;
-    check(pthread_create(&client_thread, NULL, *random_client_handler, NULL), "Impossible de créer le thread client");
-
-    //Start compute thread
-    pthread_t compute_thread;
-    check(pthread_create(&compute_thread, NULL, *compute_handler, NULL), "Impossible de créer le thread compute");
+    
+    // Create threads
+    init_threads();
 
     // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
-
-    queue_destroy(&clientsWaitingForSC);
 
     return 0;
 }
