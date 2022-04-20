@@ -42,14 +42,14 @@ typedef struct {
     int* data;
 } queue_t;
 
-int queue_read(queue_t *queue) {
-    if (queue->tail == queue->head) {
-        return 0;
+int queue_init(queue_t* q, size_t size) {
+    q->data = (int*) malloc(size * sizeof(int));
+    if (!q->data) {
+        return -1;
     }
-    int handle = queue->data[queue->tail];
-    queue->data[queue->tail] = 0;
-    queue->tail = (queue->tail + 1) % queue->size;
-    return handle;
+    q->size = size;
+    q->head = q->tail = 0;
+    return 0;
 }
 
 int queue_write(queue_t *queue, int handle) {
@@ -60,6 +60,28 @@ int queue_write(queue_t *queue, int handle) {
     queue->head = (queue->head + 1) % queue->size;
     return 0;
 }
+
+int queue_read(queue_t *queue) {
+    if (queue->tail == queue->head) {
+        return 0;
+    }
+    int handle = queue->data[queue->tail];
+    queue->data[queue->tail] = 0;
+    queue->tail = (queue->tail + 1) % queue->size;
+    return handle;
+}
+
+int queue_peek(queue_t *queue) {
+    if (queue->tail == queue->head) {
+        return 0;
+    }
+    return queue->data[queue->tail];
+} 
+
+int queue_destroy(queue_t *queue) {
+    free(queue->data);
+    return 0;
+} 
 
 queue_t clientsWaitingForSC; // Clients waiting for SC
 
@@ -421,8 +443,7 @@ int main(int argc, char *argv[])
     {
         remoteIDs[i-2] = atoi(argv[i]);
     }
-    queue_t CWFSC = {0, 0, MAX_CLIENTS+1, malloc(sizeof(int) * MAX_CLIENTS+1)};
-    clientsWaitingForSC = CWFSC;
+    queue_init(&clientsWaitingForSC, MAX_CLIENTS+1);
 
     // Create semaphores
     init_semaphores();
@@ -442,7 +463,7 @@ int main(int argc, char *argv[])
     // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
 
-    free(clientsWaitingForSC.data);
+    queue_destroy(&clientsWaitingForSC);
 
     return 0;
 }
