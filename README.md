@@ -3,11 +3,16 @@
 ## COMPILE
 
 ```bash
-gcc app.c -o app.out -lpthread -Wall
+gcc app.c -o app.out -lpthread -Wall && gcc observer.c -o observer.out -Wall
 ```
 
 ## USAGE
 
+Start observer first :
+```bash
+./observer.out
+```
+Then the app :
 ```bash
 ./app.out <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
 ```
