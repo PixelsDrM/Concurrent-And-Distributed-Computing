@@ -36,7 +36,7 @@ int ID = 0; // Local ID
 int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
 int remoteClientsNumber = 0; // Number of remote clients
 
-int localClock = 1; // Clock counter
+int localClock = 0; // Clock counter
 
 bool waitingForCS = false; // Waiting for critical section
 int replyCount = 0; // Number of replies received
@@ -47,7 +47,7 @@ typedef struct {
     int ID;
 } ClientWaitingForCS;
 
-ClientWaitingForCS clientsWaitingForCSArray[MAX_CLIENTS]; // Array of clients waiting for critical section
+ClientWaitingForCS clientsWaitingForCSArray[MAX_CLIENTS+1] = { [0 ... MAX_CLIENTS] = {2147483647, MAX_CLIENTS+1} };
 
 // Add a client to the clientsWaitingForCSArray and sort it by clock and then ID
 void addClientToCSArray(int clock, int ID) {
@@ -58,11 +58,12 @@ void addClientToCSArray(int clock, int ID) {
     // Sort the array by clock and then ID
     for (int i = 0; i < MAX_CLIENTS; i++) {
         for (int j = 0; j < MAX_CLIENTS - i - 1; j++) {
-            if (clientsWaitingForCSArray[j].clock < clientsWaitingForCSArray[j+1].clock) {
+            if (clientsWaitingForCSArray[j].clock > clientsWaitingForCSArray[j+1].clock) {
                 ClientWaitingForCS temp = clientsWaitingForCSArray[j];
                 clientsWaitingForCSArray[j] = clientsWaitingForCSArray[j+1];
                 clientsWaitingForCSArray[j+1] = temp;
-            } else if (clientsWaitingForCSArray[j].clock == clientsWaitingForCSArray[j+1].clock) {
+            } 
+            else if (clientsWaitingForCSArray[j].clock == clientsWaitingForCSArray[j+1].clock) {
                 if (clientsWaitingForCSArray[j].ID > clientsWaitingForCSArray[j+1].ID) {
                     ClientWaitingForCS temp = clientsWaitingForCSArray[j];
                     clientsWaitingForCSArray[j] = clientsWaitingForCSArray[j+1];
@@ -209,6 +210,7 @@ void *reception_handler(void *server_socket)
         perror("La réception à échoué");
     }
 
+    close(sock);
     free(server_socket);
 
     return 0;
@@ -270,7 +272,7 @@ void *random_client_handler(){
         server.sun_family = AF_UNIX;
 
         int targetClient = rand() % remoteClientsNumber;
-        printf("Clock: %d >> Envoie de '%s' vers le processus %d...\n\n", localClock, toSend, remoteIDs[targetClient]);
+        printf("Clock: %d >> Envoie de '%s' vers le processus %d\n\n", localClock, toSend, remoteIDs[targetClient]);
 
         char buffer[BUFFER_SIZE];
         snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteIDs[targetClient]);
@@ -352,6 +354,7 @@ void *broadcast_handler(void *message)
 
         pthread_t client_thread;
         check(pthread_create(&client_thread, NULL, *client_handler, (void *)msg), "Impossible de créer le thread");
+        pthread_join(client_thread, NULL);
     }
 
     return 0;
@@ -359,10 +362,9 @@ void *broadcast_handler(void *message)
 
 // Critical section
 void *CS_handler(){
-
     printf("Clock: %d >> Entrer en section critique\n\n", localClock);
 
-    
+    // Error if multiple clients try to enter the CS at the same time    
     int server_socket, addr_size;
     struct sockaddr_un server;
     check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
@@ -371,12 +373,9 @@ void *CS_handler(){
     addr_size = strlen(server.sun_path) + sizeof(server.sun_family) + 1;
     check(bind(server_socket, (struct sockaddr *)&server, addr_size), "Erreur lors du bind du socket");
     check(listen(server_socket, 3), "Erreur lors de l'écoute du socket");
-
     sleep((rand() % remoteClientsNumber) + 1);
     unlink("/tmp/SocketCS");
     
-
-    sleep((rand() % remoteClientsNumber) + 1);
     printf("Clock: %d >> Sortie de section critique\n\n", localClock);
 
     pthread_t release_thread;
@@ -406,7 +405,7 @@ void *compute_handler()
         {
             if(strcmp(toReceive[i], "") != 0)
             {
-                printf("Clock: %d >> Message reçu > %s\n\n", localClock, toReceive[i]);
+                printf("Message reçu > %s\n\n", toReceive[i]);
 
                 int senderID = 0;
                 int senderClock = 0;
@@ -424,6 +423,7 @@ void *compute_handler()
                         if(senderClock > localClock){
                             localClock = senderClock;
                         }
+                        localClock++;
                     }
                     if(j == 2)
                     {
@@ -546,6 +546,6 @@ int main(int argc, char *argv[])
 
     // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
-    
+
     return 0;
 }
