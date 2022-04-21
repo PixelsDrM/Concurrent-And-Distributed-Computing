@@ -24,17 +24,10 @@ pthread_t server_thread;
 pthread_t client_thread;
 pthread_t compute_thread;
 
-struct Message {
+typedef struct {
     char* message;
     int remoteID;
-};
-
-typedef struct {
-    size_t head;
-    size_t tail;
-    size_t size;
-    int* data;
-} queue_t;
+} Message;
 
 char toSend[BUFFER_SIZE]; // Buffer for the string to send
 char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
@@ -43,63 +36,55 @@ int ID = 0; // Local ID
 int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
 int remoteClientsNumber = 0; // Number of remote clients
 
-int localClock = 0; // Clock counter
+int localClock = 1; // Clock counter
 
 bool waitingForCS = false; // Waiting for critical section
 int replyCount = 0; // Number of replies received
-queue_t clientsWaitingForCS; // Clients waiting for critical section
 
-// Initialize a queue with a given size 
-int queue_init(queue_t* q, size_t size) {
-    q->data = (int*) malloc(size * sizeof(int));
-    if (!q->data) {
-        return -1;
-    }
-    q->size = size;
-    q->head = q->tail = 0;
-    return 0;
-}
+// Array of clients waiting for critical section with their clock and ID
+typedef struct {
+    int clock;
+    int ID;
+} ClientWaitingForCS;
 
-// Add an element at the end of the queue
-int queue_insert(queue_t *queue, int handle) {
-    if (((queue->head + 1) % queue->size) == queue->tail) {
-        return -1;
-    }
-    queue->data[queue->head] = handle;
-    queue->head = (queue->head + 1) % queue->size;
-    return 0;
-}
+ClientWaitingForCS clientsWaitingForCSArray[MAX_CLIENTS]; // Array of clients waiting for critical section
 
-// Remove an element from the queue by its value
-int queue_remove(queue_t *queue, int handle) {
-    if (queue->tail == queue->head) {
-        return -1;
-    }
-    int i = queue->tail;
-    while (i != queue->head) {
-        if (queue->data[i] == handle) {
-            queue->data[i] = 0;
-            queue->tail = (queue->tail + 1) % queue->size;
-            return 0;
+// Add a client to the clientsWaitingForCSArray and sort it by clock and then ID
+void addClientToCSArray(int clock, int ID) {
+    // Add the client to the array
+    clientsWaitingForCSArray[MAX_CLIENTS-1].clock = clock;
+    clientsWaitingForCSArray[MAX_CLIENTS-1].ID = ID;
+
+    // Sort the array by clock and then ID
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        for (int j = 0; j < MAX_CLIENTS - i - 1; j++) {
+            if (clientsWaitingForCSArray[j].clock < clientsWaitingForCSArray[j+1].clock) {
+                ClientWaitingForCS temp = clientsWaitingForCSArray[j];
+                clientsWaitingForCSArray[j] = clientsWaitingForCSArray[j+1];
+                clientsWaitingForCSArray[j+1] = temp;
+            } else if (clientsWaitingForCSArray[j].clock == clientsWaitingForCSArray[j+1].clock) {
+                if (clientsWaitingForCSArray[j].ID > clientsWaitingForCSArray[j+1].ID) {
+                    ClientWaitingForCS temp = clientsWaitingForCSArray[j];
+                    clientsWaitingForCSArray[j] = clientsWaitingForCSArray[j+1];
+                    clientsWaitingForCSArray[j+1] = temp;
+                }
+            }
         }
-        i = (i + 1) % queue->size;
-    }
-    return -1;
+    }    
 }
 
-// Get the first element of the queue without removing it
-int queue_peek(queue_t *queue) {
-    if (queue->tail == queue->head) {
-        return 0;
+// Remove a client from the clientsWaitingForCSArray
+void removeClientFromCSArray(int ID) {
+    // Remove the client from the array
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clientsWaitingForCSArray[i].ID == ID) {
+            for (int j = i; j < MAX_CLIENTS - i - 1; j++) {
+                clientsWaitingForCSArray[j] = clientsWaitingForCSArray[j+1];
+            }
+            break;
+        }
     }
-    return queue->data[queue->tail];
-} 
-
-// Destroy the queue
-int queue_destroy(queue_t *queue) {
-    free(queue->data);
-    return 0;
-} 
+}
 
 // Create named semaphores
 void init_semaphores()
@@ -168,9 +153,6 @@ void cleanup(){
     pthread_cancel(server_thread);
     pthread_cancel(client_thread);
     pthread_cancel(compute_thread);
-
-    // Destroy queue
-    queue_destroy(&clientsWaitingForCS);
 
     // Destroy named semaphores
     destroy_semaphores();
@@ -318,7 +300,7 @@ void *random_client_handler(){
 // Send a message to a specific client
 void *client_handler(void *message)
 {
-    struct Message *msg = (struct Message *)message;
+    Message *msg = (Message *)message;
 
     int socket_desc, addr_size;
     struct sockaddr_un server;
@@ -364,7 +346,7 @@ void *broadcast_handler(void *message)
  
     for(int i = 0; i < remoteClientsNumber; i++)
     {
-        struct Message *msg = malloc(sizeof(struct Message));
+        Message *msg = malloc(sizeof(Message));
         msg->message = messageToSend;
         msg->remoteID = remoteIDs[i];
 
@@ -380,7 +362,7 @@ void *CS_handler(){
 
     printf("Clock: %d >> Entrer en section critique\n\n", localClock);
 
-    /*
+    
     int server_socket, addr_size;
     struct sockaddr_un server;
     check(server_socket = socket(AF_UNIX, SOCK_STREAM, 0), "Impossible de créer le socket");
@@ -392,7 +374,7 @@ void *CS_handler(){
 
     sleep((rand() % remoteClientsNumber) + 1);
     unlink("/tmp/SocketCS");
-    */
+    
 
     sleep((rand() % remoteClientsNumber) + 1);
     printf("Clock: %d >> Sortie de section critique\n\n", localClock);
@@ -401,9 +383,8 @@ void *CS_handler(){
     pthread_create(&release_thread, NULL, broadcast_handler, "RELEASE");
     pthread_join(release_thread, NULL);
 
-    queue_remove(&clientsWaitingForCS, ID);
+    removeClientFromCSArray(ID);
     waitingForCS = false;
-    replyCount = 0;
 
     return 0;
 }
@@ -449,9 +430,9 @@ void *compute_handler()
                         // Check if message is a request
                         if(strcmp(token, "REQUEST") == 0)
                         {
-                            queue_insert(&clientsWaitingForCS, senderID);
+                            addClientToCSArray(senderClock, senderID);
 
-                            struct Message *msg = malloc(sizeof(struct Message));
+                            Message *msg = malloc(sizeof(Message));
                             msg->message = "REPLY";
                             msg->remoteID = senderID;
 
@@ -464,8 +445,9 @@ void *compute_handler()
                         else if(strcmp(token, "REPLY") == 0)
                         {
                             replyCount++;
-                            if(replyCount == remoteClientsNumber && queue_peek(&clientsWaitingForCS) == ID)
+                            if(replyCount == remoteClientsNumber && clientsWaitingForCSArray[0].ID == ID)
                             {
+                                replyCount = 0;
                                 pthread_t CS_thread;
                                 check(pthread_create(&CS_thread, NULL, *CS_handler, NULL), "Impossible de créer le thread");
                             }
@@ -473,9 +455,10 @@ void *compute_handler()
                         // Check if message is a release
                         else if(strcmp(token, "RELEASE") == 0)
                         {
-                            queue_remove(&clientsWaitingForCS, senderID);
-                            if(replyCount == remoteClientsNumber && queue_peek(&clientsWaitingForCS) == ID)
+                            removeClientFromCSArray(senderID);
+                            if(replyCount == remoteClientsNumber && clientsWaitingForCSArray[0].ID == ID)
                             {
+                                replyCount = 0;
                                 pthread_t CS_thread;
                                 check(pthread_create(&CS_thread, NULL, *CS_handler, NULL), "Impossible de créer le thread");
                             }
@@ -517,11 +500,12 @@ void *compute_handler()
             check(pthread_create(&request_thread, NULL, *broadcast_handler, "REQUEST"), "Impossible de créer le thread");
             pthread_join(request_thread, NULL);
 
-            queue_insert(&clientsWaitingForCS, ID);
+            addClientToCSArray(localClock, ID);
         }
     }
 }
 
+// Start all threads
 void init_threads()
 {
     // Start server thread
@@ -554,9 +538,6 @@ int main(int argc, char *argv[])
         remoteIDs[i-2] = atoi(argv[i]);
     }
     
-    // Create queue
-    queue_init(&clientsWaitingForCS, MAX_CLIENTS+1);
-
     // Create semaphores
     init_semaphores();
     
@@ -565,6 +546,6 @@ int main(int argc, char *argv[])
 
     // Wait for compute thread to finish
     pthread_join(compute_thread, NULL);
-
+    
     return 0;
 }
