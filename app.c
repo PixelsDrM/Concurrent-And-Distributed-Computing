@@ -12,7 +12,7 @@
 
 #define BUFFER_SIZE 64 // Maximum size of a message
 #define MAX_CLIENTS 10 // Maximum number of clients
-#define MAX_STRINGS_TO_RECEIVE MAX_CLIENTS*3 // Maximum number of strings to receive
+#define MAX_STRINGS_PER_BUFFER MAX_CLIENTS*3 // Maximum number of strings to receive
 
 sem_t* clientFull;
 sem_t* clientEmpty;
@@ -20,6 +20,9 @@ sem_t* clientMutex;
 
 sem_t* serverMutex;
 
+sem_t* observerMutex;
+
+pthread_t observer_thread;
 pthread_t server_thread;
 pthread_t client_thread;
 pthread_t compute_thread;
@@ -30,7 +33,8 @@ typedef struct {
 } Message;
 
 char toSend[BUFFER_SIZE]; // Buffer for the string to send
-char toReceive[MAX_STRINGS_TO_RECEIVE][BUFFER_SIZE]; // Buffer for the strings to receive
+char toReceive[MAX_STRINGS_PER_BUFFER][BUFFER_SIZE]; // Buffer for the strings to receive
+char toObserve[MAX_STRINGS_PER_BUFFER][BUFFER_SIZE]; // Buffer for the string to observe
 
 int ID = 0; // Local ID
 int remoteIDs[MAX_CLIENTS-1] = {0}; // Remote IDs
@@ -123,6 +127,13 @@ void init_semaphores()
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
+
+    snprintf(buffer, BUFFER_SIZE, "/observerMutex%d", ID);
+    sem_unlink(buffer);
+    if ((observerMutex = sem_open(buffer, O_CREAT, 0644, 1)) == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
 }
 
 // Destroy named semaphores
@@ -145,6 +156,10 @@ void destroy_semaphores()
     snprintf(buffer, BUFFER_SIZE, "/serverMutex%d", ID);
     sem_unlink(buffer);
     sem_close(serverMutex);
+
+    snprintf(buffer, BUFFER_SIZE, "/observerMutex%d", ID);
+    sem_unlink(buffer);
+    sem_close(observerMutex);
 }
 
 // Clean everything and exit
@@ -154,6 +169,7 @@ void cleanup()
     printf("\nCleaning up...\n");
 
     // Stop threads
+    pthread_cancel(observer_thread);
     pthread_cancel(server_thread);
     pthread_cancel(client_thread);
     pthread_cancel(compute_thread);
@@ -192,7 +208,7 @@ void *reception_handler(void *server_socket)
     while ((message_size = recv(sock, remote_message, BUFFER_SIZE, 0)) > 0)
     {
         sem_wait(serverMutex);
-        for(int i = 0; i < MAX_STRINGS_TO_RECEIVE; i++)
+        for(int i = 0; i < MAX_STRINGS_PER_BUFFER; i++)
         {
             if(strcmp(toReceive[i], "") == 0)
             {
@@ -406,10 +422,22 @@ void *compute_handler()
 
         //Action 1 (vérification des messages reçus)
         sem_wait(serverMutex);
-        for(int i = 0; i < MAX_STRINGS_TO_RECEIVE; i++)
+        for(int i = 0; i < MAX_STRINGS_PER_BUFFER; i++)
         {
             if(strcmp(toReceive[i], "") != 0)
             {
+                // Create trace
+                sem_wait(observerMutex);
+                for(int j = 0; j < MAX_STRINGS_PER_BUFFER; j++)
+                {
+                    if(strcmp(toObserve[j], "") == 0)
+                    {
+                        snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;RECEPTION;%s\n", getpid(), localClock+1, toReceive[i]);
+                        break;
+                    }
+                }
+                sem_post(observerMutex);
+
                 printf("Message reçu > %s\n\n", toReceive[i]);
 
                 int senderID = 0;
@@ -480,6 +508,17 @@ void *compute_handler()
         int random = rand() % 3;
         if (random == 0 && waitingForCS == false)
         {
+            // Create trace
+            sem_wait(observerMutex);
+            for(int j = 0; j < MAX_STRINGS_PER_BUFFER; j++)
+            {
+                if(strcmp(toObserve[j], "") == 0)
+                {
+                    snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;LOCAL\n", getpid(), localClock);
+                    break;
+                }
+            }
+            sem_post(observerMutex);
             localClock++;
             printf("Clock: %d >> Action locale\n\n", localClock);
         }
@@ -491,6 +530,17 @@ void *compute_handler()
             sem_wait(clientEmpty);
             sem_wait(clientMutex);
             snprintf(toSend, BUFFER_SIZE, "%d;%d;%d", ID, localClock, rand() % 100);
+            // Create trace
+            sem_wait(observerMutex);
+            for(int j = 0; j < MAX_STRINGS_PER_BUFFER; j++)
+            {
+                if(strcmp(toObserve[j], "") == 0)
+                {
+                    snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;ENVOI;%s\n", getpid(), localClock, toSend);
+                    break;
+                }
+            }
+            sem_post(observerMutex);
             sem_post(clientMutex);
             sem_post(clientFull);
         }
@@ -510,9 +560,45 @@ void *compute_handler()
     }
 }
 
+// Consume trace produced by the compute_handler
+void *observer_handler()
+{
+    // Open named pipe for writing
+    int fd = open("/tmp/ObserverPipe", O_WRONLY);
+    if (fd == -1)
+    {
+        perror("Impossible d'ouvrir le pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    // Write in named pipe
+    while(1)
+    {
+        sem_wait(observerMutex);
+        for(int i = 0; i < MAX_STRINGS_PER_BUFFER; i++)
+        {
+            if(strcmp(toObserve[i], "") != 0)
+            {
+                write(fd, toObserve[i], strlen(toObserve[i]));
+                memset(toObserve[i], 0, sizeof toObserve[i]);
+            }
+        }
+        sem_post(observerMutex);
+        sleep(1);
+    }
+
+    // Close named pipe
+    close(fd);
+
+    return 0;
+}
+
 // Start all threads
 void init_threads()
 {
+    // Start observer thread
+    check(pthread_create(&observer_thread, NULL, *observer_handler, NULL), "Impossible de créer le thread");
+
     // Start server thread
     check(pthread_create(&server_thread, NULL, *server_handler, NULL), "Impossible de créer le thread serveur");
 

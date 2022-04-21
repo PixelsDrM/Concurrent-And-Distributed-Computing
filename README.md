@@ -14,10 +14,22 @@ gcc app.c -o app.out -lpthread -Wall
 
 ## EXEMPLE
 
-With three different terminal :
+First terminal : 
+```bash
+./observer.out
+```
 
+Second terminal : 
 ```bash
 ./app.out 1 2 3
+```
+
+Third terminal : 
+```bash
 ./app.out 2 1 3
+```
+
+Fourth terminal : 
+```bash
 ./app.out 3 1 2
 ```
