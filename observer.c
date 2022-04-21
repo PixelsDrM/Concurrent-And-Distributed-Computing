@@ -1,15 +1,26 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <errno.h>
+#include <unistd.h>
+#include <signal.h>
 
 #define BUFFER_SIZE 64
 #define PIPE_NAME "/tmp/ObserverPipe"
 
+void cleanup() {
+    printf("Cleaning up...\n");
+    unlink(PIPE_NAME);
+    printf("Cleanup done.\n");
+    exit(0);
+}
+
 int main(int argc, char *argv[])
 {
+    // Handle SIGINT
+    signal(SIGINT, cleanup);
+    
     int fd;
     char buffer[BUFFER_SIZE];
     int n;
@@ -23,13 +34,13 @@ int main(int argc, char *argv[])
         }
     }
 
+    printf("\nObserver is running...\n\n");
+
     if ((fd = open(PIPE_NAME, O_RDONLY)) == -1)
     {
         printf("\nCan't open named pipe %s\n", PIPE_NAME);
         exit(1);
     }
-
-    printf("\nObserver is running...\n");
 
     while (1)
     {
@@ -50,7 +61,8 @@ int main(int argc, char *argv[])
         // Write pipe content to file trace.txt
         FILE *fp = fopen("trace.txt", "a");
         fprintf(fp, "%s", buffer);
-        fclose(fp);        
+        fclose(fp);
+
         printf("%s", buffer);
     }
 
