@@ -528,10 +528,10 @@ int main(int argc, char *argv[])
     // Handle CTRL+C
     signal(SIGINT, cleanup);
     
-    // Usage: ./app <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
+    // Usage: ./app.out <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
     if (argc < 3 || argc-1 > MAX_CLIENTS)
     {
-        printf("Usage: ./app <ID1> <remoteID2> <remoteID3> ... <remoteID%d>\n", MAX_CLIENTS);
+        printf("Usage: ./app.out <ID1> <remoteID2> <remoteID3> ... <remoteID%d>\n", MAX_CLIENTS);
         return 1;
     }
 
