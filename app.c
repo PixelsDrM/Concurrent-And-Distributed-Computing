@@ -50,7 +50,8 @@ typedef struct {
 ClientWaitingForCS clientsWaitingForCSArray[MAX_CLIENTS+1] = { [0 ... MAX_CLIENTS] = {2147483647, MAX_CLIENTS+1} };
 
 // Add a client to the clientsWaitingForCSArray and sort it by clock and then ID
-void addClientToCSArray(int clock, int ID) {
+void addClientToCSArray(int clock, int ID) 
+{
     // Add the client to the array
     clientsWaitingForCSArray[MAX_CLIENTS-1].clock = clock;
     clientsWaitingForCSArray[MAX_CLIENTS-1].ID = ID;
@@ -75,7 +76,8 @@ void addClientToCSArray(int clock, int ID) {
 }
 
 // Remove a client from the clientsWaitingForCSArray
-void removeClientFromCSArray(int ID) {
+void removeClientFromCSArray(int ID) 
+{
     // Remove the client from the array
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clientsWaitingForCSArray[i].ID == ID) {
@@ -146,7 +148,8 @@ void destroy_semaphores()
 }
 
 // Clean everything and exit
-void cleanup(){
+void cleanup()
+{
     // Cleanup
     printf("\nCleaning up...\n");
 
@@ -254,7 +257,8 @@ void *server_handler()
 }
 
 // Send a random message to a random client (Consume messages produced by the compute thread)
-void *random_client_handler(){
+void *random_client_handler()
+{
     while(1){
         sem_wait(clientFull); 
         sem_wait(clientMutex);
@@ -361,7 +365,8 @@ void *broadcast_handler(void *message)
 }
 
 // Critical section
-void *CS_handler(){
+void *CS_handler()
+{
     printf("Clock: %d >> Entrer en section critique\n\n", localClock);
 
     // Error if multiple clients try to enter the CS at the same time    
