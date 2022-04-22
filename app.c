@@ -165,9 +165,6 @@ void destroy_semaphores()
 // Clean everything and exit
 void cleanup()
 {
-    // Cleanup
-    printf("\nCleaning up...\n");
-
     // Stop threads
     pthread_cancel(observer_thread);
     pthread_cancel(server_thread);
@@ -183,7 +180,6 @@ void cleanup()
     snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", ID);
     unlink(buffer);
 
-    printf("Done!\n");
     exit(0);
 }
 
@@ -226,7 +222,7 @@ void *reception_handler(void *server_socket)
     }
     else if (message_size == -1)
     {
-        perror("La réception à échoué");
+        perror("La réception a échoué");
     }
 
     close(sock);
@@ -292,7 +288,7 @@ void *random_client_handler()
         server.sun_family = AF_UNIX;
 
         int targetClient = rand() % remoteClientsNumber;
-        printf("Clock: %d >> Envoie de '%s' vers le processus %d\n\n", localClock, toSend, remoteIDs[targetClient]);
+        printf("Clock: %d >> Envoi de '%s' vers le processus %d\n\n", localClock, toSend, remoteIDs[targetClient]);
 
         char buffer[BUFFER_SIZE];
         snprintf(buffer, BUFFER_SIZE, "/tmp/Socket%d", remoteIDs[targetClient]);
@@ -356,6 +352,19 @@ void *client_handler(void *message)
     }
 
     close(socket_desc);
+
+    // Create trace
+    sem_wait(observerMutex);
+    for(int j = 0; j < MAX_STRINGS_PER_BUFFER; j++)
+    {
+        if(strcmp(toObserve[j], "") == 0)
+        {
+            snprintf(toObserve[j], BUFFER_SIZE, "%d|%d|ENVOI|%s\n", getpid(), localClock, msg->message);
+            break;
+        }
+    }
+    sem_post(observerMutex);
+
     free(message);
 
     return 0;
@@ -432,7 +441,7 @@ void *compute_handler()
                 {
                     if(strcmp(toObserve[j], "") == 0)
                     {
-                        snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;RECEPTION;%s\n", getpid(), localClock+1, toReceive[i]);
+                        snprintf(toObserve[j], BUFFER_SIZE, "%d|%d|RECEPTION|%s\n", getpid(), localClock+1, toReceive[i]);
                         break;
                     }
                 }
@@ -514,7 +523,7 @@ void *compute_handler()
             {
                 if(strcmp(toObserve[j], "") == 0)
                 {
-                    snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;LOCAL\n", getpid(), localClock);
+                    snprintf(toObserve[j], BUFFER_SIZE, "%d|%d|LOCAL\n", getpid(), localClock);
                     break;
                 }
             }
@@ -536,7 +545,7 @@ void *compute_handler()
             {
                 if(strcmp(toObserve[j], "") == 0)
                 {
-                    snprintf(toObserve[j], BUFFER_SIZE, "%d;%d;ENVOI;%s\n", getpid(), localClock, toSend);
+                    snprintf(toObserve[j], BUFFER_SIZE, "%d|%d|ENVOI|%s\n", getpid(), localClock, toSend);
                     break;
                 }
             }
