@@ -17,6 +17,8 @@ Then the app :
 ./app.out <ID1> <remoteID2> <remoteID3> ... <remoteIDn>
 ```
 
+To stop the observer just close every running app with an interuption signal (CTRL+C)
+
 ## EXEMPLE
 
 First terminal : 
