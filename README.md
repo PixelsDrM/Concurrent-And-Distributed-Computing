@@ -1,4 +1,4 @@
-# TP-Informatique-Concurente-Et-Repartie
+# Concurrent And Distributed Computing
 
 ## COMPILE
 
